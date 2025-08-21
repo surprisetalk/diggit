@@ -46,14 +46,7 @@ commas : String -> String
 commas =
     String.reverse
         >> String.toList
-        >> List.indexedMap
-            (\i c ->
-                if i > 0 && modBy 3 i == 0 then
-                    [ ',', c ]
-
-                else
-                    [ c ]
-            )
+        >> List.indexedMap (\i c -> iif (i > 0 && modBy 3 i == 0) [ ',', c ] [ c ])
         >> List.concat
         >> String.fromList
         >> String.reverse
@@ -91,7 +84,10 @@ port requestRepo : String -> Cmd msg
 port repoLoaded : (D.Value -> msg) -> Sub msg
 
 
-port docErrored : String -> Cmd msg
+port pageErrored : String -> Cmd msg
+
+
+port progressReported : ({ message : String, progress : Float } -> msg) -> Sub msg
 
 
 
@@ -195,7 +191,9 @@ type alias Repo =
     }
 
 
-type ClaudeModel
+type
+    ClaudeModel
+    -- TODO: We don't need this. Just use a string.
     = Opus41
     | Sonnet41
     | Haiku35
@@ -252,6 +250,7 @@ type alias Error =
 type alias Model =
     { nav : Nav.Key
     , errors : List Error
+    , progress : Dict String Float
     , repos : List String
     , hover : Set Tag
     , form : Filters
@@ -405,7 +404,7 @@ init : Flags -> Url -> Nav.Key -> ( Model, Cmd Msg )
 init flags url nav =
     let
         filters =
-            route url
+            router url
 
         initialClaude =
             { auth = Maybe.withDefault "" flags.claudeAuth
@@ -428,7 +427,8 @@ init flags url nav =
         model =
             { nav = nav
             , errors = []
-            , repos = [ "elm-lang/compiler", "ziglang/zig", "roc-lang/roc" ]
+            , progress = Dict.empty
+            , repos = [ "elm/compiler", "ziglang/zig", "roc-lang/roc" ]
             , hover = Set.empty
             , form = filters
             , route = filters
@@ -438,51 +438,44 @@ init flags url nav =
             }
     in
     ( model
-    , if String.isEmpty filters.repo then
-        Cmd.none
-
-      else
-        requestRepo filters.repo
+    , iif (String.isEmpty filters.repo) Cmd.none (requestRepo filters.repo)
     )
 
 
-routeParser : UrlP.Parser (Filters -> a) a
-routeParser =
-    UrlP.map makeFilters
-        (UrlP.s "repo"
-            </> UrlP.string
-            </> UrlP.string
-            <?> UrlQ.string "start"
-            <?> UrlQ.string "end"
-            <?> UrlQ.string "tags"
-        )
+defaultFilters : Filters
+defaultFilters =
+    { repo = "", start = "", end = "", tags = Set.empty }
 
 
-makeFilters : String -> String -> Maybe String -> Maybe String -> Maybe String -> Filters
-makeFilters owner repo maybeStart maybeEnd maybeTags =
-    { repo = owner ++ "/" ++ repo
-    , start = Maybe.withDefault "" maybeStart
-    , end = Maybe.withDefault "" maybeEnd
-    , tags =
-        maybeTags
-            |> Maybe.withDefault ""
-            |> String.split ","
-            |> List.filter (not << String.isEmpty)
-            |> Set.fromList
-    }
-
-
-route : Url -> Filters
-route url =
-    -- e.g. /repo/ziglang/zig?start=20240401&end=20250401&tags=\>main,@sally#202404
-    url
-        |> UrlP.parse routeParser
-        |> Maybe.withDefault
-            { repo = ""
-            , start = ""
-            , end = ""
-            , tags = Set.empty
-            }
+router : Url -> Filters
+router =
+    let
+        -- e.g. /repo/ziglang/zig?start=20240401&end=20250401&tags=\>main,@sally#202404
+        routeParser : UrlP.Parser (Filters -> a) a
+        routeParser =
+            (UrlP.top
+                </> UrlP.string
+                </> UrlP.string
+                <?> UrlQ.string "start"
+                <?> UrlQ.string "end"
+                <?> UrlQ.string "tags"
+            )
+                |> UrlP.map
+                    (\owner repo maybeStart maybeEnd maybeTags ->
+                        { repo = owner ++ "/" ++ repo
+                        , start = Maybe.withDefault "" maybeStart
+                        , end = Maybe.withDefault "" maybeEnd
+                        , tags =
+                            maybeTags
+                                |> Maybe.withDefault ""
+                                |> String.split ","
+                                |> List.filter (not << String.isEmpty)
+                                |> Set.fromList
+                        }
+                    )
+    in
+    UrlP.parse routeParser
+        >> Maybe.withDefault defaultFilters
 
 
 
@@ -511,7 +504,9 @@ type Msg
     | JobTick Time
     | JobCompleted Int (Result Http.Error ClaudeResponse)
     | AddError String
-    | DocErrored String
+    | PageErrored String
+    | ProgressReported { message : String, progress : Float }
+    | RemoveError Int
 
 
 
@@ -522,6 +517,7 @@ subs : Model -> Sub Msg
 subs model =
     Sub.batch
         [ repoLoaded RepoLoaded
+        , progressReported ProgressReported
 
         -- TODO: Time.every (1000) JobTick
         ]
@@ -532,7 +528,7 @@ subs model =
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
-update msg model =
+update msg ({ form, claude } as model) =
     case msg of
         NoOp ->
             ( model, Cmd.none )
@@ -540,9 +536,9 @@ update msg model =
         UrlChange url ->
             let
                 filters =
-                    route url
+                    router url
             in
-            ( { model | route = filters, repo = Nothing }
+            ( { model | route = filters, form = { form | repo = filters.repo }, repo = iif (model.route.repo == filters.repo) model.repo Nothing }
             , iif (model.route.repo == filters.repo) Cmd.none (requestRepo filters.repo)
             )
 
@@ -553,19 +549,15 @@ update msg model =
             ( model, Nav.load url )
 
         RepoUrlChanged url ->
-            let
-                newForm =
-                    model.form
-                        |> (\f -> { f | repo = url })
-            in
-            ( { model | form = newForm }, Cmd.none )
+            ( { model | form = { form | repo = url } }, Cmd.none )
 
         RepoUrlSubmitted ->
-            ( model
-            , Nav.pushUrl model.nav ("/repo/" ++ model.form.repo)
+            ( { model | form = { defaultFilters | repo = model.form.repo } }
+            , Nav.pushUrl model.nav model.form.repo
             )
 
         StartChanged t ->
+            -- TODO : Get rid of let statement.
             let
                 newForm =
                     model.form
@@ -576,6 +568,7 @@ update msg model =
             )
 
         EndChanged t ->
+            -- TODO : Get rid of let statement.
             let
                 newForm =
                     model.form
@@ -586,6 +579,7 @@ update msg model =
             )
 
         TagAdded tag ->
+            -- TODO : Get rid of let statement.
             let
                 newForm =
                     model.form
@@ -596,6 +590,7 @@ update msg model =
             )
 
         TagExcluded tag ->
+            -- TODO : Get rid of let statement.
             let
                 newForm =
                     model.form
@@ -606,6 +601,7 @@ update msg model =
             )
 
         TagRemoved tag ->
+            -- TODO : Get rid of let statement.
             let
                 newForm =
                     model.form
@@ -621,11 +617,7 @@ update msg model =
                     ( model, Cmd.none )
 
                 Just repo ->
-                    let
-                        newRepo =
-                            { repo | report = Just { summary = "", suggestions = [], events = [] } }
-                    in
-                    ( { model | repo = Just newRepo }
+                    ( { model | repo = Just { repo | report = Just { summary = "", suggestions = [], events = [] } } }
                     , Cmd.batch
                         [-- TODO: clusters 10 |> Random.generate ReportTagClustered
                          -- TODO: clusters 100 |> Random.generate ReportEventClustered
@@ -634,20 +626,10 @@ update msg model =
                     )
 
         ClaudeModelChanged mod ->
-            let
-                claude =
-                    model.claude
-                        |> (\c -> { c | model = mod })
-            in
-            ( { model | claude = claude }, Cmd.none )
+            ( { model | claude = { claude | model = mod } }, Cmd.none )
 
         ClaudeAuthChanged auth ->
-            let
-                claude =
-                    model.claude
-                        |> (\c -> { c | auth = auth })
-            in
-            ( { model | claude = claude }, Cmd.none )
+            ( { model | claude = { claude | auth = auth } }, Cmd.none )
 
         Hovered tags ->
             ( { model | hover = tags }, Cmd.none )
@@ -669,6 +651,7 @@ update msg model =
                     )
 
         GithubEventsFetched result ->
+            -- TODO: Use syntax like (GithubEventsFetched (Ok events)).
             case result of
                 Ok events ->
                     -- TODO: Update repo.github.events
@@ -680,6 +663,7 @@ update msg model =
                     )
 
         GithubUsersFetched result ->
+            -- TODO: Use syntax like (GithubEventsFetched (Ok events)).
             case result of
                 Ok users ->
                     -- TODO: Update repo.github.users
@@ -691,6 +675,7 @@ update msg model =
                     )
 
         GithubIssuesFetched result ->
+            -- TODO: Use syntax like (GithubEventsFetched (Ok events)).
             case result of
                 Ok issues ->
                     -- TODO: Update repo.github.issues
@@ -712,8 +697,28 @@ update msg model =
         AddError message ->
             ( addError message model, Cmd.none )
 
-        DocErrored message ->
+        PageErrored message ->
             ( addError message model, Cmd.none )
+
+        ProgressReported { message, progress } ->
+            ( { model | progress = Dict.insert message progress model.progress }, Cmd.none )
+
+        RemoveError index ->
+            ( { model
+                | errors =
+                    List.indexedMap
+                        (\i e ->
+                            if i == index then
+                                Nothing
+
+                            else
+                                Just e
+                        )
+                        model.errors
+                        |> List.filterMap identity
+              }
+            , Cmd.none
+            )
 
 
 addError : String -> Model -> Model
@@ -742,39 +747,20 @@ httpErrorToString error =
 
 buildUrl : Filters -> String
 buildUrl filters =
+    -- TODO: Use Url.Builder instead.
     let
         base =
-            if String.isEmpty filters.repo then
-                "/"
-
-            else
-                "/repo/" ++ filters.repo
+            iif (String.isEmpty filters.repo) "/" filters.repo
 
         params =
-            [ if String.isEmpty filters.start then
-                Nothing
-
-              else
-                Just ("start=" ++ filters.start)
-            , if String.isEmpty filters.end then
-                Nothing
-
-              else
-                Just ("end=" ++ filters.end)
-            , if Set.isEmpty filters.tags then
-                Nothing
-
-              else
-                Just ("tags=" ++ String.join "," (Set.toList filters.tags))
+            [ iif (String.isEmpty filters.start) Nothing (Just ("start=" ++ filters.start))
+            , iif (String.isEmpty filters.end) Nothing (Just ("end=" ++ filters.end))
+            , iif (Set.isEmpty filters.tags) Nothing (Just ("tags=" ++ String.join "," (Set.toList filters.tags)))
             ]
                 |> List.filterMap identity
                 |> String.join "&"
     in
-    if String.isEmpty params then
-        base
-
-    else
-        base ++ "?" ++ params
+    iif (String.isEmpty params) base (base ++ "?" ++ params)
 
 
 
@@ -785,14 +771,14 @@ buildUrl filters =
 view : Model -> Browser.Document Msg
 view model =
     let
-        flex children =
-            H.div [ A.class "flex flex-wrap" ] children
+        flex =
+            H.div << (::) (A.class "flex flex-wrap")
 
-        rows children =
-            H.div [ A.class "flex flex-col" ] children
+        rows =
+            H.div << (::) (A.class "flex flex-col")
 
-        cols children =
-            H.div [ A.class "flex flex-row" ] children
+        cols attrs =
+            H.div << (::) (A.class "flex flex-row")
 
         filteredEvents =
             allEvents model
@@ -844,8 +830,10 @@ view model =
     { title = "diggit"
     , body =
         [ H.div [ A.class "app-layout" ]
-            [ viewAside model filteredEvents allTags filteredTagFrequencies
+            [ viewProgressBars model
+            , viewAside model filteredEvents allTags filteredTagFrequencies
             , viewMain model filteredEvents
+            , viewErrors model
             ]
         ]
     }
@@ -911,13 +899,7 @@ viewRepoSection model =
                 ]
             ]
         , H.div [ A.class "repo-list" ]
-            (List.map
-                (\repo ->
-                    H.a
-                        [ A.href ("/repo/" ++ repo)
-                        ]
-                        [ text repo ]
-                )
+            (List.map (\repo -> H.a [ A.href ("/" ++ repo) ] [ text repo ])
                 model.repos
             )
         ]
@@ -964,15 +946,7 @@ viewTagsSection model tagFrequencies =
                         (\tag ->
                             H.button
                                 [ A.onClick (TagRemoved tag)
-                                , A.class
-                                    ("btn btn-small "
-                                        ++ (if String.startsWith "-" tag then
-                                                "btn-tag-exclude"
-
-                                            else
-                                                "btn-tag-active"
-                                           )
-                                    )
+                                , A.class ("btn btn-small " ++ iif (String.startsWith "-" tag) "btn-tag-exclude" "btn-tag-active")
                                 ]
                                 [ text ("× " ++ tag) ]
                         )
@@ -989,7 +963,7 @@ viewTagsSection model tagFrequencies =
                 , tagButton "+ #tag" (TagAdded "#tag")
                 ]
             ]
-        , if not (List.isEmpty tagFrequencies) then
+        , iif (List.isEmpty tagFrequencies) (H.div [] []) <|
             H.div []
                 [ H.div [ A.class "section-title" ]
                     [ text "Popular tags" ]
@@ -1002,9 +976,6 @@ viewTagsSection model tagFrequencies =
                             )
                     )
                 ]
-
-          else
-            H.div [] []
         ]
 
 
@@ -1121,21 +1092,10 @@ viewReportSection repo model =
                     [ H.h3 []
                         [ text "AI Summary" ]
                     , H.p []
-                        [ text
-                            (if String.isEmpty report.summary then
-                                "Generating summary..."
-
-                             else
-                                report.summary
-                            )
+                        [ text (iif (String.isEmpty report.summary) "Generating summary..." report.summary)
                         ]
                     ]
-                , if not (List.isEmpty report.suggestions) then
-                    H.div [ A.class "suggestions" ]
-                        (List.map viewSuggestion report.suggestions)
-
-                  else
-                    H.div [] []
+                , iif (List.isEmpty report.suggestions) (H.div [] []) <| H.div [ A.class "suggestions" ] (List.map viewSuggestion report.suggestions)
                 ]
 
 
@@ -1174,13 +1134,7 @@ viewEvent model event =
     in
     H.div
         [ A.class "event-card"
-        , A.style "background-color"
-            (if isHovered then
-                "#f8f8f8"
-
-             else
-                "white"
-            )
+        , A.style "background-color" (iif isHovered "#f8f8f8" "white")
         , A.onMouseEnter (Hovered event.tags)
         , A.onMouseLeave (Hovered Set.empty)
         ]
@@ -1194,12 +1148,9 @@ viewEvent model event =
             ]
         , H.div [ A.class "event-meta" ]
             [ H.span [] [ text eventDate ]
-            , if event.insertions > 0 || event.deletions > 0 then
+            , iif (not (event.insertions > 0 || event.deletions > 0)) (H.span [] []) <|
                 H.span [ A.class "event-changes" ]
                     [ text ("+" ++ String.fromInt event.insertions ++ " -" ++ String.fromInt event.deletions) ]
-
-              else
-                H.span [] []
             , H.div [ A.class "event-tags" ]
                 (event.tags
                     |> Set.toList
@@ -1212,12 +1163,9 @@ viewEvent model event =
                         )
                 )
             ]
-        , if not (String.isEmpty event.summary) && String.length event.summary > 60 then
+        , iif (String.isEmpty event.summary && String.length event.summary > 60) (H.div [] []) <|
             H.p [ A.class "event-description" ]
                 [ text event.summary ]
-
-          else
-            H.div [] []
         ]
 
 
@@ -1237,4 +1185,59 @@ viewVisualization events =
             ]
 
         -- TODO: Add actual histogram chart here
+        ]
+
+
+viewProgressBars : Model -> Html Msg
+viewProgressBars model =
+    H.div
+        [ A.class "progress-container" ]
+        (model.progress
+            |> Dict.filter (\_ v -> v < 1)
+            |> Dict.toList
+            |> List.map viewProgressBar
+        )
+
+
+viewProgressBar : ( String, Float ) -> Html Msg
+viewProgressBar ( message, progress ) =
+    H.div
+        [ A.class "progress-item" ]
+        [ H.div
+            [ A.class "progress-label" ]
+            [ text message ]
+        , H.div
+            [ A.class "progress-bar-container" ]
+            [ H.div
+                [ A.class "progress-bar-fill"
+                , A.style "width" (String.fromFloat (progress * 100) ++ "%")
+                ]
+                []
+            ]
+        ]
+
+
+viewErrors : Model -> Html Msg
+viewErrors model =
+    if List.isEmpty model.errors then
+        H.div [] []
+
+    else
+        H.div
+            [ A.class "error-container" ]
+            (List.indexedMap viewError model.errors)
+
+
+viewError : Int -> Error -> Html Msg
+viewError index error =
+    H.div
+        [ A.class "error-item" ]
+        [ H.div
+            [ A.class "error-message" ]
+            [ text error.message ]
+        , H.button
+            [ A.onClick (RemoveError index)
+            , A.class "error-close"
+            ]
+            [ text "×" ]
         ]

@@ -369,3 +369,83 @@ body {
   color: #666;
   margin-bottom: 15px;
 }
+
+/* Progress bars */
+.progress-container {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1000;
+  background: white;
+  border-bottom: 1px solid #e0e0e0;
+  padding: 8px;
+}
+
+.progress-item {
+  margin-bottom: 4px;
+}
+
+.progress-label {
+  font-size: 12px;
+  color: #666;
+  margin-bottom: 2px;
+}
+
+.progress-bar-container {
+  width: 100%;
+  height: 4px;
+  background: #f0f0f0;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  background: #4CAF50;
+  transition: width 0.3s ease;
+}
+
+/* Error display */
+.error-container {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  max-width: 400px;
+  z-index: 1001;
+}
+
+.error-item {
+  background: #f44336;
+  color: white;
+  padding: 12px;
+  margin-bottom: 8px;
+  border-radius: 4px;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+}
+
+.error-message {
+  flex: 1;
+  margin-right: 8px;
+  font-size: 14px;
+}
+
+.error-close {
+  background: transparent;
+  border: none;
+  color: white;
+  font-size: 18px;
+  cursor: pointer;
+  padding: 0;
+  margin: 0;
+  line-height: 1;
+  opacity: 0.8;
+  transition: opacity 0.2s;
+}
+
+.error-close:hover {
+  opacity: 1;
+}
