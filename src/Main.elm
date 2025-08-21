@@ -91,6 +91,9 @@ port requestRepo : String -> Cmd msg
 port repoLoaded : (D.Value -> msg) -> Sub msg
 
 
+port docErrored : String -> Cmd msg
+
+
 
 ---- MAIN ---------------------------------------------------------------------
 
@@ -508,6 +511,7 @@ type Msg
     | JobTick Time
     | JobCompleted Int (Result Http.Error ClaudeResponse)
     | AddError String
+    | DocErrored String
 
 
 
@@ -706,6 +710,9 @@ update msg model =
             ( model, Cmd.none )
 
         AddError message ->
+            ( addError message model, Cmd.none )
+
+        DocErrored message ->
             ( addError message model, Cmd.none )
 
 

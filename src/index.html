@@ -20,16 +20,139 @@
       try {
         const app = Elm.Main.init({
           node: document.getElementById("elm"),
-          flags: {},
+          flags: {
+            claudeAuth: localStorage.getItem("claudeAuth"),
+            claudeModel: localStorage.getItem("claudeModel") || "sonnet41",
+          },
         });
 
-        // TODO: app.ports.subscribe.requestRepo
-        // TODO:   // TODO: git clone
-        // TODO:   app.ports.send.repoLoaded
-        //
+        app.ports.requestRepo.subscribe(async (repoUrl) => {
+          try {
+            console.log(`Cloning repository: ${repoUrl}`);
+
+            const dir = `/repos/${repoUrl}`;
+            const url = `https://github.com/${repoUrl}`;
+
+            await git.clone({
+              fs: window.fs,
+              http,
+              dir,
+              corsProxy: "https://cors.isomorphic-git.org",
+              url,
+              depth: 1,
+              singleBranch: true,
+            });
+
+            const commits = await git.log({
+              fs: window.fs,
+              dir,
+              depth: 100,
+            });
+
+            const authors = {};
+            const commitData = {};
+
+            for (const commit of commits) {
+              const authorId = commit.commit.author.email;
+
+              if (!authors[authorId]) {
+                authors[authorId] = {
+                  id: authorId,
+                  name: commit.commit.author.name,
+                  email: commit.commit.author.email,
+                  avatarUrl: null,
+                };
+              }
+
+              commitData[commit.oid] = {
+                id: commit.oid,
+                url: `${url}/commit/${commit.oid}`,
+                start: commit.commit.author.timestamp * 1000,
+                end: null,
+                insertions: 0,
+                deletions: 0,
+                tags: ["commit", `@${commit.commit.author.name}`],
+                summary: commit.commit.message,
+              };
+            }
+
+            const branches = await git.listBranches({
+              fs: window.fs,
+              dir,
+            });
+
+            const branchData = {};
+            for (const branch of branches) {
+              const branchCommit = await git.resolveRef({
+                fs: window.fs,
+                dir,
+                ref: branch,
+              });
+
+              branchData[branch] = {
+                id: branchCommit,
+                url: `${url}/tree/${branch}`,
+                start: Date.now(),
+                end: null,
+                insertions: 0,
+                deletions: 0,
+                tags: ["branch", `>${branch}`],
+                summary: `Branch: ${branch}`,
+              };
+            }
+
+            const files = await getFileList(dir);
+
+            const repoData = {
+              url: url,
+              commits: commitData,
+              authors: authors,
+              tags: {},
+              branches: branchData,
+              files: files,
+              github: {
+                issues: {},
+                events: {},
+                users: {},
+              },
+              report: null,
+            };
+
+            app.ports.repoLoaded.send(repoData);
+          } catch (error) {
+            console.error("Failed to clone repository:", error);
+            app.ports.repoLoaded.send({
+              error: error.message || "Failed to clone repository",
+            });
+          }
+        });
+
+        async function getFileList(dir, path = "") {
+          const files = [];
+          try {
+            const entries = await window.pfs.readdir(dir + path);
+            for (const entry of entries) {
+              const fullPath = path + "/" + entry;
+              const stat = await window.pfs.stat(dir + fullPath);
+              if (stat.isDirectory()) {
+                const subFiles = await getFileList(dir, fullPath);
+                files.push(...subFiles);
+              } else {
+                files.push(fullPath.substring(1));
+              }
+            }
+          } catch (error) {
+            console.warn(`Could not read directory ${dir + path}:`, error);
+          }
+          return files;
+        }
       } catch (error) {
         console.error(error);
-        app.ports.docErrored.send(error?.message ?? "Something went wrong.");
+        if (app && app.ports && app.ports.docErrored) {
+          app.ports.docErrored.send(error?.message ?? "Something went wrong.");
+        } else {
+          document.body.innerHTML = `<div style="padding: 20px; color: red;">Error: ${error?.message ?? "Something went wrong."}</div>`;
+        }
       }
     </script>
   </body>
