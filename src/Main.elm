@@ -111,83 +111,195 @@ main =
 ---- MODEL --------------------------------------------------------------------
 
 
+type alias Tag =
+    String
+
+
+type alias Id =
+    String
+
+
+type alias Time =
+    Float
+
+
+type alias Filters =
+    { repo : String
+    , start : String
+    , end : String
+    , tags : Set Tag
+    }
+
+
+type alias Event =
+    { id : Id
+    , url : String
+    , start : Time
+    , end : Maybe Time
+    , insertions : Int
+    , deletions : Int
+    , tags : Set Tag
+    , summary : String
+    }
+
+
+type alias Author =
+    { id : Id
+    , name : String
+    , email : String
+    , avatarUrl : Maybe String
+    }
+
+
+type alias GithubUser =
+    { id : Id
+    , login : String
+    , name : Maybe String
+    , avatarUrl : String
+    , htmlUrl : String
+    }
+
+
+type alias Github =
+    { issues : Dict Int Event
+    , events : Dict Id Event
+    , users : Dict Id GithubUser
+    }
+
+
+type alias Suggestion =
+    { text : String
+    , prompt : String
+    }
+
+
+type alias Report =
+    { summary : String
+    , suggestions : List Suggestion
+    , events : List Event
+    }
+
+
+type alias Repo =
+    { url : String
+    , commits : Dict Id Event
+    , authors : Dict Id Author
+    , tags : Dict String Id
+    , branches : Dict String Event
+    , files : Set String
+    , github : Github
+    , report : Maybe Report
+    }
+
+
+type ClaudeModel
+    = Opus41
+    | Sonnet41
+    | Haiku35
+
+
+type alias ClaudeRequest =
+    { prompt : String
+    , model : ClaudeModel
+    , maxTokens : Int
+    }
+
+
+type alias ClaudeResponse =
+    { content : String
+    , usage : { inputTokens : Int, outputTokens : Int }
+    , model : ClaudeModel
+    }
+
+
+type alias Claude =
+    { auth : String
+    , model : ClaudeModel
+    , history : List { request : ClaudeRequest, response : ClaudeResponse, tokens : Int, price : Float }
+    }
+
+
+type RemoteData e a
+    = NotAsked
+    | Loading
+    | Failure e
+    | Success a
+
+
+type JobDest
+    = Summary Filters
+    | ShortName Filters
+    | Suggestions Filters
+    | KeyEvent Filters
+
+
+type alias Job =
+    { dest : JobDest
+    , request : ClaudeRequest
+    , status : RemoteData Http.Error ClaudeResponse
+    }
+
+
+type alias Error =
+    { message : String
+    , timestamp : Time
+    }
+
+
 type alias Model =
-    {}
+    { nav : Nav.Key
+    , errors : List Error
+    , repos : List String
+    , hover : Set Tag
+    , form : Filters
+    , route : Filters
+    , repo : Maybe Repo
+    , claude : Claude
+    , jobs : Array Job
+    }
+
+
+allEvents : Model -> List Event
+allEvents model =
+    case model.repo of
+        Nothing ->
+            []
+
+        Just repo ->
+            List.concat
+                [ Dict.values repo.commits
+                , Dict.values repo.github.issues
+                , Dict.values repo.github.events
+                , case repo.report of
+                    Nothing ->
+                        []
+
+                    Just report ->
+                        report.events
+                ]
+
+
+eventVector : List Tag -> Event -> List Float
+eventVector allTags event =
+    let
+        duration =
+            case event.end of
+                Nothing ->
+                    0
+
+                Just endTime ->
+                    endTime - event.start
+    in
+    [ event.start
+    , Maybe.withDefault event.start event.end
+    , duration
+    , toFloat event.insertions
+    , toFloat event.deletions
+    ]
+        ++ List.map (\tag -> iif (Set.member tag event.tags) 1.0 0.0) allTags
 
 
 
--- TODO: Model
--- TODO:   errors : List Error
--- TODO:   repos : List String
--- TODO:   hover : Set Tag
--- TODO:   form : Filters
--- TODO:   route : Filters
--- TODO:   repo : Maybe Repo
--- TODO:   claude : Claude
--- TODO:   jobs : Array Job
--- TODO:
--- TODO: Job
--- TODO:   dest : JobDest
--- TODO:   request : Claude.Request
--- TODO:   status : Remote Http.Error Claude.Response
--- TODO:
--- TODO: JobDest
--- TODO:   Summary Filters
--- TODO:   ShortName Filters
--- TODO:   Suggestions Filters
--- TODO:   KeyEvent Filters
--- TODO:
--- TODO: Repo
--- TODO:   commits : Dict Id Event
--- TODO:   authors : Dict Id Author
--- TODO:   tags : Dict String Id
--- TODO:   branches : Dict String Event
--- TODO:   files : Set String
--- TODO:   github : Github
--- TODO:   report : Report
--- TODO:
--- TODO: Claude
--- TODO:   auth : String
--- TODO:   model : Claude.Model
--- TODO:
--- TODO: Github
--- TODO:   issues : Dict Int Event
--- TODO:   events : Dict Id Event
--- TODO:   users : Dict Id Github.User
--- TODO:
--- TODO: Report
--- TODO:   summary : String
--- TODO:   suggestions : List Suggestion
--- TODO:   events : List Event
--- TODO:
--- TODO: Suggestion
--- TODO:   text : String
--- TODO:   prompt : String
--- TODO:
--- TODO: Tag : String
--- TODO:
--- TODO: Event
--- TODO:   url : Url
--- TODO:   start : Time
--- TODO:   end : Maybe Time
--- TODO:   insertions : Int
--- TODO:   deletions : Int
--- TODO:   tags : Set Tag  -- e.g. commits, authors, tags, branches, files
--- TODO:   summary : String
--- TODO:
--- TODO: Filters
--- TODO:   repo : String
--- TODO:   start : String
--- TODO:   end : String
--- TODO:   tags : Set Tag
---
--- TODO: allEvents model = List.concat [repo.commits, repo.github.issues, repo.github.events, repo.report.events]
---
--- TODO: eventVector event =
--- TODO:   [ start, end, end - start, insertions, deletions ]
--- TODO:   -- TODO: Compute "file/directory distance" for filenames.
--- TODO:   ++ List.map (\tag -> iif (Set.member tag event.tags) 1.0 0.0) (Set.fromList allTags)
---
 -- TODO: clusters n = allEvents model |> Random.List.shuffle |> Random.map (KMeans.clusterBy eventVector n)
 --
 ---- PARSER -------------------------------------------------------------------
@@ -195,7 +307,85 @@ type alias Model =
 
 repoDecoder : D.Decoder Repo
 repoDecoder =
-    D.fail "TODO"
+    D.map8 Repo
+        (D.field "url" D.string)
+        (D.field "commits" (D.dict eventDecoder))
+        (D.field "authors" (D.dict authorDecoder))
+        (D.field "tags" (D.dict D.string))
+        (D.field "branches" (D.dict eventDecoder))
+        (D.field "files" (D.list D.string |> D.map Set.fromList))
+        (D.field "github" githubDecoder)
+        (D.maybe (D.field "report" reportDecoder))
+
+
+eventDecoder : D.Decoder Event
+eventDecoder =
+    D.map8 Event
+        (D.field "id" D.string)
+        (D.field "url" D.string)
+        (D.field "start" D.float)
+        (D.maybe (D.field "end" D.float))
+        (D.field "insertions" D.int)
+        (D.field "deletions" D.int)
+        (D.field "tags" (D.list D.string |> D.map Set.fromList))
+        (D.field "summary" D.string)
+
+
+authorDecoder : D.Decoder Author
+authorDecoder =
+    D.map4 Author
+        (D.field "id" D.string)
+        (D.field "name" D.string)
+        (D.field "email" D.string)
+        (D.maybe (D.field "avatarUrl" D.string))
+
+
+githubDecoder : D.Decoder Github
+githubDecoder =
+    D.map3 Github
+        (D.field "issues"
+            (D.dict eventDecoder
+                |> D.map
+                    (Dict.foldl
+                        (\k v acc ->
+                            case String.toInt k of
+                                Just intKey ->
+                                    Dict.insert intKey v acc
+
+                                Nothing ->
+                                    acc
+                        )
+                        Dict.empty
+                    )
+            )
+        )
+        (D.field "events" (D.dict eventDecoder))
+        (D.field "users" (D.dict githubUserDecoder))
+
+
+githubUserDecoder : D.Decoder GithubUser
+githubUserDecoder =
+    D.map5 GithubUser
+        (D.field "id" D.string)
+        (D.field "login" D.string)
+        (D.maybe (D.field "name" D.string))
+        (D.field "avatarUrl" D.string)
+        (D.field "htmlUrl" D.string)
+
+
+reportDecoder : D.Decoder Report
+reportDecoder =
+    D.map3 Report
+        (D.field "summary" D.string)
+        (D.field "suggestions" (D.list suggestionDecoder))
+        (D.field "events" (D.list eventDecoder))
+
+
+suggestionDecoder : D.Decoder Suggestion
+suggestionDecoder =
+    D.map2 Suggestion
+        (D.field "text" D.string)
+        (D.field "prompt" D.string)
 
 
 
@@ -203,24 +393,93 @@ repoDecoder =
 
 
 type alias Flags =
-    {}
+    { claudeAuth : Maybe String
+    , claudeModel : Maybe String
+    }
 
 
 init : Flags -> Url -> Nav.Key -> ( Model, Cmd Msg )
-init _ url nav =
+init flags url nav =
     let
         filters =
             route url
+
+        initialClaude =
+            { auth = Maybe.withDefault "" flags.claudeAuth
+            , model =
+                case flags.claudeModel of
+                    Just "opus41" ->
+                        Opus41
+
+                    Just "sonnet41" ->
+                        Sonnet41
+
+                    Just "haiku35" ->
+                        Haiku35
+
+                    _ ->
+                        Sonnet41
+            , history = []
+            }
+
+        model =
+            { nav = nav
+            , errors = []
+            , repos = [ "elm-lang/compiler", "ziglang/zig", "roc-lang/roc" ]
+            , hover = Set.empty
+            , form = filters
+            , route = filters
+            , repo = Nothing
+            , claude = initialClaude
+            , jobs = Array.empty
+            }
     in
-    ( model, requestRepo filters.repo )
+    ( model
+    , if String.isEmpty filters.repo then
+        Cmd.none
+
+      else
+        requestRepo filters.repo
+    )
+
+
+routeParser : UrlP.Parser (Filters -> a) a
+routeParser =
+    UrlP.map makeFilters
+        (UrlP.s "repo"
+            </> UrlP.string
+            </> UrlP.string
+            <?> UrlQ.string "start"
+            <?> UrlQ.string "end"
+            <?> UrlQ.string "tags"
+        )
+
+
+makeFilters : String -> String -> Maybe String -> Maybe String -> Maybe String -> Filters
+makeFilters owner repo maybeStart maybeEnd maybeTags =
+    { repo = owner ++ "/" ++ repo
+    , start = Maybe.withDefault "" maybeStart
+    , end = Maybe.withDefault "" maybeEnd
+    , tags =
+        maybeTags
+            |> Maybe.withDefault ""
+            |> String.split ","
+            |> List.filter (not << String.isEmpty)
+            |> Set.fromList
+    }
 
 
 route : Url -> Filters
 route url =
-    -- TODO: e.g. /ziglang/zig?start=20240401&end=20250401&tags=\>main,@sally#202404
+    -- e.g. /repo/ziglang/zig?start=20240401&end=20250401&tags=\>main,@sally#202404
     url
-        |> UrlP.parse Debug.todo
-        |> Maybe.withDefault {}
+        |> UrlP.parse routeParser
+        |> Maybe.withDefault
+            { repo = ""
+            , start = ""
+            , end = ""
+            , tags = Set.empty
+            }
 
 
 
@@ -231,6 +490,24 @@ type Msg
     = NoOp
     | UrlChange Url
     | LinkClick Browser.UrlRequest
+    | RepoUrlChanged String
+    | RepoUrlSubmitted
+    | StartChanged String
+    | EndChanged String
+    | TagAdded Tag
+    | TagExcluded Tag
+    | TagRemoved Tag
+    | ReportRequested
+    | ClaudeModelChanged ClaudeModel
+    | ClaudeAuthChanged String
+    | Hovered (Set Tag)
+    | RepoLoaded D.Value
+    | GithubEventsFetched (Result Http.Error (List Event))
+    | GithubUsersFetched (Result Http.Error (List GithubUser))
+    | GithubIssuesFetched (Result Http.Error (Dict Int Event))
+    | JobTick Time
+    | JobCompleted Int (Result Http.Error ClaudeResponse)
+    | AddError String
 
 
 
@@ -239,13 +516,11 @@ type Msg
 
 subs : Model -> Sub Msg
 subs model =
-    -- TODO: fetchGithubEvents
-    -- TODO: fetchGithubUsers
-    -- TODO: fetchGithubIssues
-    -- TODO: JobTick
-    -- TODO: repoLoaded
     Sub.batch
-        []
+        [ repoLoaded RepoLoaded
+
+        -- TODO: Time.every (1000) JobTick
+        ]
 
 
 
@@ -253,7 +528,7 @@ subs model =
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
-update msg ({} as model) =
+update msg model =
     case msg of
         NoOp ->
             ( model, Cmd.none )
@@ -273,25 +548,229 @@ update msg ({} as model) =
         LinkClick (Browser.External url) ->
             ( model, Nav.load url )
 
+        RepoUrlChanged url ->
+            let
+                newForm =
+                    model.form
+                        |> (\f -> { f | repo = url })
+            in
+            ( { model | form = newForm }, Cmd.none )
+
+        RepoUrlSubmitted ->
+            ( model
+            , Nav.pushUrl model.nav ("/repo/" ++ model.form.repo)
+            )
+
+        StartChanged t ->
+            let
+                newForm =
+                    model.form
+                        |> (\f -> { f | start = t })
+            in
+            ( { model | form = newForm }
+            , Nav.pushUrl model.nav (buildUrl model.route)
+            )
+
+        EndChanged t ->
+            let
+                newForm =
+                    model.form
+                        |> (\f -> { f | end = t })
+            in
+            ( { model | form = newForm }
+            , Nav.pushUrl model.nav (buildUrl model.route)
+            )
+
+        TagAdded tag ->
+            let
+                newForm =
+                    model.form
+                        |> (\f -> { f | tags = Set.insert tag f.tags })
+            in
+            ( { model | form = newForm }
+            , Nav.pushUrl model.nav (buildUrl newForm)
+            )
+
+        TagExcluded tag ->
+            let
+                newForm =
+                    model.form
+                        |> (\f -> { f | tags = Set.insert ("-" ++ tag) f.tags })
+            in
+            ( { model | form = newForm }
+            , Nav.pushUrl model.nav (buildUrl newForm)
+            )
+
+        TagRemoved tag ->
+            let
+                newForm =
+                    model.form
+                        |> (\f -> { f | tags = Set.remove tag f.tags })
+            in
+            ( { model | form = newForm }
+            , Nav.pushUrl model.nav (buildUrl newForm)
+            )
+
+        ReportRequested ->
+            case model.repo of
+                Nothing ->
+                    ( model, Cmd.none )
+
+                Just repo ->
+                    let
+                        newRepo =
+                            { repo | report = Just { summary = "", suggestions = [], events = [] } }
+                    in
+                    ( { model | repo = Just newRepo }
+                    , Cmd.batch
+                        [-- TODO: clusters 10 |> Random.generate ReportTagClustered
+                         -- TODO: clusters 100 |> Random.generate ReportEventClustered
+                         -- TODO: Claude.summarize model.repo
+                        ]
+                    )
+
+        ClaudeModelChanged mod ->
+            let
+                claude =
+                    model.claude
+                        |> (\c -> { c | model = mod })
+            in
+            ( { model | claude = claude }, Cmd.none )
+
+        ClaudeAuthChanged auth ->
+            let
+                claude =
+                    model.claude
+                        |> (\c -> { c | auth = auth })
+            in
+            ( { model | claude = claude }, Cmd.none )
+
+        Hovered tags ->
+            ( { model | hover = tags }, Cmd.none )
+
+        RepoLoaded value ->
+            case D.decodeValue repoDecoder value of
+                Ok repo ->
+                    ( { model | repo = Just repo }
+                    , Cmd.batch
+                        [-- TODO: fetchGithubEvents repo
+                         -- TODO: fetchGithubUsers repo
+                         -- TODO: fetchGithubIssues repo
+                        ]
+                    )
+
+                Err err ->
+                    ( addError ("Failed to decode repo: " ++ D.errorToString err) model
+                    , Cmd.none
+                    )
+
+        GithubEventsFetched result ->
+            case result of
+                Ok events ->
+                    -- TODO: Update repo.github.events
+                    ( model, Cmd.none )
+
+                Err err ->
+                    ( addError ("Failed to fetch GitHub events: " ++ httpErrorToString err) model
+                    , Cmd.none
+                    )
+
+        GithubUsersFetched result ->
+            case result of
+                Ok users ->
+                    -- TODO: Update repo.github.users
+                    ( model, Cmd.none )
+
+                Err err ->
+                    ( addError ("Failed to fetch GitHub users: " ++ httpErrorToString err) model
+                    , Cmd.none
+                    )
+
+        GithubIssuesFetched result ->
+            case result of
+                Ok issues ->
+                    -- TODO: Update repo.github.issues
+                    ( model, Cmd.none )
+
+                Err err ->
+                    ( addError ("Failed to fetch GitHub issues: " ++ httpErrorToString err) model
+                    , Cmd.none
+                    )
+
+        JobTick time ->
+            -- TODO: Start next job if none are processing
+            ( model, Cmd.none )
+
+        JobCompleted index result ->
+            -- TODO: Update job at index with result
+            ( model, Cmd.none )
+
+        AddError message ->
+            ( addError message model, Cmd.none )
 
 
--- TODO: update
--- TODO:   RepoUrlChanged url -> { model | repoUrl = url }
--- TODO:   RepoUrlSubmitted -> model, navPush model.repoUrl
--- TODO:   StartChanged t -> model, navPush "?start=..."
--- TODO:   EndChanged t -> model, navPush "?end=..."
--- TODO:   TagAdded -> model, navPush "?tags=..."
--- TODO:   TagExcluded -> model, navPush "?tags=..."
--- TODO:   TagRemoved -> model, navPush "?tags=..."
--- TODO:   ReportRequested -> { model | repo = { repo | report = Just Report.init } }, Cmd.batch [ clusters 10 |> Random.generate ReportTagClustered, clusters 100 |> Random.generate ReportEventClustered, Claude.summarize model.repo ]
--- TODO:   ClaudeModelChanged mod -> model, changeClaude { claude | model = mod }
--- TODO:   ClaudeAuthChanged auth -> model, changeClaude { claude | auth = auth }
--- TODO:   Hovered tags -> { model | hover = tags }
--- TODO:   RepoChanged repo -> { model | repo = repo }, fetchGithubEvents repo
--- TODO:   ClaudeChanged claude -> { model | claude = claude }
--- TODO:   GithubEventsFetched events -> ...
--- TODO:   JobTick -> ... -- if no jobs are processing, start a new one
--- TODO:   JobCompleted i res -> ...
+addError : String -> Model -> Model
+addError message model =
+    { model | errors = { message = message, timestamp = 0 } :: model.errors }
+
+
+httpErrorToString : Http.Error -> String
+httpErrorToString error =
+    case error of
+        Http.BadUrl url ->
+            "Bad URL: " ++ url
+
+        Http.Timeout ->
+            "Request timed out"
+
+        Http.NetworkError ->
+            "Network error"
+
+        Http.BadStatus status ->
+            "Bad status: " ++ String.fromInt status
+
+        Http.BadBody body ->
+            "Bad body: " ++ body
+
+
+buildUrl : Filters -> String
+buildUrl filters =
+    let
+        base =
+            if String.isEmpty filters.repo then
+                "/"
+
+            else
+                "/repo/" ++ filters.repo
+
+        params =
+            [ if String.isEmpty filters.start then
+                Nothing
+
+              else
+                Just ("start=" ++ filters.start)
+            , if String.isEmpty filters.end then
+                Nothing
+
+              else
+                Just ("end=" ++ filters.end)
+            , if Set.isEmpty filters.tags then
+                Nothing
+
+              else
+                Just ("tags=" ++ String.join "," (Set.toList filters.tags))
+            ]
+                |> List.filterMap identity
+                |> String.join "&"
+    in
+    if String.isEmpty params then
+        base
+
+    else
+        base ++ "?" ++ params
+
+
+
 --
 ---- VIEW ---------------------------------------------------------------------
 
