@@ -1,0 +1,371 @@
+/* Base styles */
+body {
+  font-family: system-ui, -apple-system, sans-serif;
+  margin: 0;
+  padding: 0;
+}
+
+/* Layout */
+.app-layout {
+  display: flex;
+  min-height: 100vh;
+}
+
+.flex {
+  display: flex;
+}
+
+.flex-wrap {
+  flex-wrap: wrap;
+}
+
+.flex-col {
+  flex-direction: column;
+}
+
+.flex-row {
+  flex-direction: row;
+}
+
+.flex-1 {
+  flex: 1;
+}
+
+.gap-5 {
+  gap: 5px;
+}
+
+.gap-8 {
+  gap: 8px;
+}
+
+.gap-10 {
+  gap: 10px;
+}
+
+.gap-15 {
+  gap: 15px;
+}
+
+.gap-20 {
+  gap: 20px;
+}
+
+/* Sidebar */
+.sidebar {
+  width: 320px;
+  padding: 20px;
+  border-right: 1px solid #e0e0e0;
+  overflow-y: auto;
+  max-height: 100vh;
+}
+
+/* Main content */
+.main-content {
+  flex: 1;
+  padding: 20px;
+  overflow-y: auto;
+  max-height: 100vh;
+}
+
+/* Header */
+.header {
+  margin-bottom: 30px;
+}
+
+.header h1 {
+  font-size: 24px;
+  margin-bottom: 5px;
+}
+
+.header h1 a {
+  color: #333;
+  text-decoration: none;
+  font-weight: bold;
+}
+
+.header h2 {
+  font-size: 14px;
+  color: #666;
+  margin-bottom: 15px;
+}
+
+.header-links {
+  display: flex;
+  gap: 15px;
+  font-size: 12px;
+}
+
+.header-links a {
+  color: #0066cc;
+}
+
+/* Sections */
+.section {
+  margin-bottom: 25px;
+}
+
+.section-title {
+  font-size: 12px;
+  color: #666;
+  margin-bottom: 10px;
+}
+
+/* Forms */
+.form {
+  margin-bottom: 15px;
+}
+
+.form-row {
+  display: flex;
+  gap: 10px;
+}
+
+.form-input {
+  flex: 1;
+  padding: 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+}
+
+.form-input-small {
+  flex: 1;
+  padding: 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+/* Buttons */
+.btn {
+  padding: 8px 15px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.btn-primary {
+  background-color: #0066cc;
+  color: white;
+}
+
+.btn-secondary {
+  background-color: #f0f0f0;
+  color: #333;
+  border: 1px solid #ddd;
+}
+
+.btn-small {
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+.btn-tag-active {
+  background-color: #4CAF50;
+  color: white;
+}
+
+.btn-tag-exclude {
+  background-color: #ff4444;
+  color: white;
+}
+
+/* Tags */
+.tag {
+  padding: 2px 6px;
+  background-color: #e8f4f8;
+  color: #0066cc;
+  border-radius: 3px;
+  font-size: 11px;
+}
+
+.tag-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+/* Repository list */
+.repo-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 14px;
+}
+
+.repo-list a {
+  color: #0066cc;
+  text-decoration: none;
+}
+
+/* Events */
+.events-section {
+  margin-bottom: 30px;
+}
+
+.events-section h3 {
+  font-size: 18px;
+  margin-bottom: 15px;
+}
+
+.events-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.event-card {
+  padding: 15px;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  background-color: white;
+  transition: background-color 0.2s;
+}
+
+.event-card:hover {
+  background-color: #f8f8f8;
+}
+
+.event-header {
+  margin-bottom: 10px;
+}
+
+.event-link {
+  color: #0066cc;
+  text-decoration: none;
+  font-weight: 500;
+  font-size: 14px;
+}
+
+.event-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 12px;
+  color: #666;
+}
+
+.event-changes {
+  color: #28a745;
+}
+
+.event-tags {
+  display: flex;
+  gap: 5px;
+}
+
+.event-description {
+  margin-top: 10px;
+  color: #666;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+/* Report section */
+.report-section {
+  margin-bottom: 30px;
+}
+
+.report-summary {
+  margin-bottom: 20px;
+}
+
+.report-summary h3 {
+  font-size: 18px;
+  margin-bottom: 10px;
+}
+
+.report-summary p {
+  color: #666;
+  line-height: 1.6;
+}
+
+.suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.suggestion {
+  padding: 8px 12px;
+  background-color: #f0f0f0;
+  color: #333;
+  text-decoration: none;
+  border-radius: 4px;
+  font-size: 14px;
+}
+
+/* Visualization */
+.visualization {
+  margin-top: 30px;
+  padding: 20px;
+  background-color: #f8f8f8;
+  border-radius: 4px;
+}
+
+.visualization h3 {
+  font-size: 18px;
+  margin-bottom: 10px;
+}
+
+.visualization p {
+  color: #666;
+}
+
+/* Empty state */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: #666;
+}
+
+.empty-state h2 {
+  font-size: 24px;
+  margin-bottom: 10px;
+}
+
+.empty-state p {
+  font-size: 16px;
+}
+
+/* Claude section */
+.claude-section .select {
+  flex: 1;
+  padding: 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.claude-section .password-input {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 12px;
+  margin-bottom: 10px;
+}
+
+.claude-stats {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: #666;
+}
+
+/* Filter info */
+.filter-info {
+  font-size: 12px;
+  color: #666;
+  margin-bottom: 5px;
+}
+
+.filter-count {
+  font-size: 12px;
+  color: #666;
+  margin-bottom: 15px;
+}

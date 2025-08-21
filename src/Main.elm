@@ -776,104 +776,458 @@ buildUrl filters =
 
 
 view : Model -> Browser.Document Msg
-view ({} as model) =
+view model =
     let
-        flex =
-            H.div [ S.displayFlex, S.flexWrapWrap ]
+        flex children =
+            H.div [ A.class "flex flex-wrap" ] children
 
-        rows =
-            H.div [ S.displayFlex, S.flexDirectionColumn ]
+        rows children =
+            H.div [ A.class "flex flex-col" ] children
 
-        cols =
-            H.div [ S.displayFlex, S.flexDirectionRow ]
+        cols children =
+            H.div [ A.class "flex flex-row" ] children
 
-        -- TODO: filteredEvents = allEvents model |> List.filter (\event -> model.route.start <= event.start && event.end <= model.route.end && not (Set.isEmpty (Set.intersect model.route.tags event.tags)) )
-        -- TODO:
-        -- TODO: allTags = allEvents model |> List.map .tags |> List.foldl Set.union Set.empty
-        -- TODO:
-        -- TODO: filteredTags = filteredEvents |> List.map .tags |> List.concatMap Set.toList |> List.foldl (\k d -> Dict.update k (Maybe.withDefault 0 >> (+) 1 >> Just)) Dict.empty |> Dict.toList |> List.sortBy (Tuple.second >> negate) |> List.map Tuple.first
+        filteredEvents =
+            allEvents model
+                |> List.filter
+                    (\event ->
+                        let
+                            startOk =
+                                String.isEmpty model.route.start
+                                    || (model.route.start <= String.fromFloat event.start)
+
+                            endOk =
+                                String.isEmpty model.route.end
+                                    || (case event.end of
+                                            Nothing ->
+                                                True
+
+                                            Just e ->
+                                                String.fromFloat e <= model.route.end
+                                       )
+
+                            tagsOk =
+                                Set.isEmpty model.route.tags
+                                    || not (Set.isEmpty (Set.intersect model.route.tags event.tags))
+                        in
+                        startOk && endOk && tagsOk
+                    )
+
+        allTags =
+            allEvents model
+                |> List.map .tags
+                |> List.foldl Set.union Set.empty
+                |> Set.toList
+
+        -- TODO: Calculate tag frequencies for filtered events
+        filteredTagFrequencies =
+            filteredEvents
+                |> List.map .tags
+                |> List.concatMap Set.toList
+                |> List.foldl
+                    (\tag dict ->
+                        Dict.update tag
+                            (Maybe.withDefault 0 >> (+) 1 >> Just)
+                            dict
+                    )
+                    Dict.empty
+                |> Dict.toList
+                |> List.sortBy (Tuple.second >> negate)
     in
     { title = "diggit"
     , body =
-        []
+        [ H.div [ A.class "app-layout" ]
+            [ viewAside model filteredEvents allTags filteredTagFrequencies
+            , viewMain model filteredEvents
+            ]
+        ]
     }
 
 
+viewAside : Model -> List Event -> List Tag -> List ( Tag, Int ) -> Html Msg
+viewAside model filteredEvents allTags tagFrequencies =
+    H.aside
+        [ A.class "sidebar"
+        ]
+        [ viewHeader
+        , viewRepoSection model
+        , viewFiltersSection model filteredEvents
+        , viewTagsSection model tagFrequencies
+        , viewClaudeSection model
+        ]
 
--- TODO: view
--- TODO:   aside
--- TODO:     header
--- TODO:       h1: a: DIGGIT.DEV
--- TODO:       h2: for architecture archaeologists
--- TODO:       flex
--- TODO:         a: by taylor.town
--- TODO:         a: view on github
--- TODO:     section
--- TODO:       form
--- TODO:         input[name=repo]
--- TODO:         button submit
--- TODO:       flex
--- TODO:         a: elm-lang/compiler
--- TODO:         a: ziglang/zig
--- TODO:         a: roc-lang/roc
--- TODO:         a: ...recent searches
--- TODO:     section
--- TODO:       rows
--- TODO:         histogram: filteredEvents
--- TODO:           y: 1
--- TODO:           x: createdAt
--- TODO:         cols
--- TODO:           input[type=datetime,name=start]
--- TODO:           input[type=datetime,name=end]
--- TODO:       rows
--- TODO:         flex
--- TODO:           button: x @jonsmith
--- TODO:           button: x >main
--- TODO:           button: x .tsx
--- TODO:           button: + /src
--- TODO:           button: + #bug
--- TODO:           button: + "TODO"
--- TODO:           form
--- TODO:             input[name=tag]
--- TODO:             button: submit
--- TODO:         flex
--- TODO:           button: x .json
--- TODO:           button: - /node_modules
--- TODO:           button: - >staging
--- TODO:           form
--- TODO:             input[name=tag]
--- TODO:             button: submit
--- TODO:     section
--- TODO:       rows
--- TODO:         cols
--- TODO:           select
--- TODO:             option: opus 4.1
--- TODO:             option: sonnet 4.1
--- TODO:             option: haiku 3.5
--- TODO:           input[name=api-key]
--- TODO:         cols
--- TODO:           span: (list.sum (list.map .tokens claude.history)) tokens
--- TODO:           span: $(list.sum (list.map .price claude.history))
--- TODO:   main
--- TODO:     cols
--- TODO:       rows
--- TODO:         cols
--- TODO:           p: ai summary
--- TODO:           flex
--- TODO:             a: remove extra dependencies
--- TODO:             a: reduce transparency
--- TODO:             a: plan next migration
--- TODO:         flex: filteredEvents
--- TODO:           div[min-width=[merge,release].includes(type)?16rem:8rem]
--- TODO:             a: fixed bug (#41)
--- TODO:             flex
--- TODO:               span: 2024-04-02
--- TODO:               span: +242 -180
--- TODO:               a: @jonsmith
--- TODO:               a: >main
--- TODO:               a: #12f0b7
--- TODO:             p: summary
--- TODO:       histogram (vertical): filteredEvents
--- TODO:         y: linesAdded - linesRemoved
--- TODO:         x: createdAt
--- TODO:
+
+viewHeader : Html Msg
+viewHeader =
+    H.header [ A.class "header" ]
+        [ H.h1 []
+            [ H.a
+                [ A.href "/"
+                ]
+                [ text "DIGGIT.DEV" ]
+            ]
+        , H.h2 []
+            [ text "for architecture archaeologists" ]
+        , H.div [ A.class "header-links" ]
+            [ H.a
+                [ A.href "https://taylor.town"
+                , A.target "_blank"
+                ]
+                [ text "by taylor.town" ]
+            , H.a
+                [ A.href "https://github.com/surprisetalk/diggit"
+                , A.target "_blank"
+                ]
+                [ text "view on github" ]
+            ]
+        ]
+
+
+viewRepoSection : Model -> Html Msg
+viewRepoSection model =
+    H.section [ A.class "section" ]
+        [ H.form [ A.onSubmit RepoUrlSubmitted, A.class "form" ]
+            [ H.div [ A.class "form-row" ]
+                [ H.input
+                    [ A.type_ "text"
+                    , A.placeholder "owner/repo"
+                    , A.value model.form.repo
+                    , A.onInput RepoUrlChanged
+                    , A.class "form-input"
+                    ]
+                    []
+                , H.button
+                    [ A.type_ "submit"
+                    , A.class "btn btn-primary"
+                    ]
+                    [ text "Load" ]
+                ]
+            ]
+        , H.div [ A.class "repo-list" ]
+            (List.map
+                (\repo ->
+                    H.a
+                        [ A.href ("/repo/" ++ repo)
+                        ]
+                        [ text repo ]
+                )
+                model.repos
+            )
+        ]
+
+
+viewFiltersSection : Model -> List Event -> Html Msg
+viewFiltersSection model filteredEvents =
+    H.section [ A.class "section" ]
+        [ -- TODO: Add histogram visualization here
+          H.div [ A.class "filter-count" ]
+            [ H.div [ A.class "filter-info" ]
+                [ text ("Showing " ++ String.fromInt (List.length filteredEvents) ++ " events") ]
+            ]
+        , H.div [ A.class "form-row" ]
+            [ H.input
+                [ A.type_ "datetime-local"
+                , A.placeholder "Start date"
+                , A.value model.form.start
+                , A.onInput StartChanged
+                , A.class "form-input-small"
+                ]
+                []
+            , H.input
+                [ A.type_ "datetime-local"
+                , A.placeholder "End date"
+                , A.value model.form.end
+                , A.onInput EndChanged
+                , A.class "form-input-small"
+                ]
+                []
+            ]
+        ]
+
+
+viewTagsSection : Model -> List ( Tag, Int ) -> Html Msg
+viewTagsSection model tagFrequencies =
+    H.section [ A.class "section" ]
+        [ H.div []
+            [ H.div [ A.class "section-title" ]
+                [ text "Active filters" ]
+            , H.div [ A.class "tag-filters" ]
+                (Set.toList model.form.tags
+                    |> List.map
+                        (\tag ->
+                            H.button
+                                [ A.onClick (TagRemoved tag)
+                                , A.class
+                                    ("btn btn-small "
+                                        ++ (if String.startsWith "-" tag then
+                                                "btn-tag-exclude"
+
+                                            else
+                                                "btn-tag-active"
+                                           )
+                                    )
+                                ]
+                                [ text ("× " ++ tag) ]
+                        )
+                )
+            ]
+        , H.div []
+            [ H.div [ A.class "section-title" ]
+                [ text "Add filters" ]
+            , H.div [ A.class "tag-filters" ]
+                [ tagButton "+ @user" (TagAdded "@user")
+                , tagButton "+ >branch" (TagAdded ">branch")
+                , tagButton "+ .ext" (TagAdded ".ext")
+                , tagButton "+ /path" (TagAdded "/path")
+                , tagButton "+ #tag" (TagAdded "#tag")
+                ]
+            ]
+        , if not (List.isEmpty tagFrequencies) then
+            H.div []
+                [ H.div [ A.class "section-title" ]
+                    [ text "Popular tags" ]
+                , H.div [ A.class "tag-filters" ]
+                    (tagFrequencies
+                        |> List.take 10
+                        |> List.map
+                            (\( tag, count ) ->
+                                tagButton (tag ++ " (" ++ String.fromInt count ++ ")") (TagAdded tag)
+                            )
+                    )
+                ]
+
+          else
+            H.div [] []
+        ]
+
+
+tagButton : String -> Msg -> Html Msg
+tagButton label msg =
+    H.button
+        [ A.onClick msg
+        , A.class "btn btn-secondary btn-small"
+        ]
+        [ text label ]
+
+
+viewClaudeSection : Model -> Html Msg
+viewClaudeSection model =
+    let
+        totalTokens =
+            model.claude.history
+                |> List.map .tokens
+                |> List.sum
+
+        totalPrice =
+            model.claude.history
+                |> List.map .price
+                |> List.sum
+    in
+    H.section [ A.class "claude-section section" ]
+        [ H.div [ A.class "section-title" ]
+            [ text "Claude Settings" ]
+        , H.div [ A.class "form-row" ]
+            [ H.select
+                [ A.onInput
+                    (\s ->
+                        ClaudeModelChanged
+                            (case s of
+                                "opus41" ->
+                                    Opus41
+
+                                "haiku35" ->
+                                    Haiku35
+
+                                _ ->
+                                    Sonnet41
+                            )
+                    )
+                , A.class "select"
+                ]
+                [ H.option [ A.value "opus41", A.selected (model.claude.model == Opus41) ] [ text "Opus 4.1" ]
+                , H.option [ A.value "sonnet41", A.selected (model.claude.model == Sonnet41) ] [ text "Sonnet 4.1" ]
+                , H.option [ A.value "haiku35", A.selected (model.claude.model == Haiku35) ] [ text "Haiku 3.5" ]
+                ]
+            ]
+        , H.input
+            [ A.type_ "password"
+            , A.placeholder "API Key"
+            , A.value model.claude.auth
+            , A.onInput ClaudeAuthChanged
+            , A.class "password-input"
+            ]
+            []
+        , H.div [ A.class "claude-stats" ]
+            [ H.span [] [ text (commas (String.fromInt totalTokens) ++ " tokens") ]
+            , H.span [] [ text (usd totalPrice) ]
+            ]
+        ]
+
+
+viewMain : Model -> List Event -> Html Msg
+viewMain model filteredEvents =
+    H.main_
+        [ A.class "main-content"
+        ]
+        [ case model.repo of
+            Nothing ->
+                viewEmptyState
+
+            Just repo ->
+                H.div []
+                    [ viewReportSection repo model
+                    , viewEventsSection filteredEvents model
+                    , viewVisualization filteredEvents
+                    ]
+        ]
+
+
+viewEmptyState : Html Msg
+viewEmptyState =
+    H.div
+        [ A.class "empty-state"
+        ]
+        [ H.h2 []
+            [ text "Welcome to Diggit" ]
+        , H.p []
+            [ text "Select a repository to start exploring its architecture" ]
+        ]
+
+
+viewReportSection : Repo -> Model -> Html Msg
+viewReportSection repo model =
+    case repo.report of
+        Nothing ->
+            H.div [ A.class "report-section" ]
+                [ H.button
+                    [ A.onClick ReportRequested
+                    , A.class "btn btn-primary"
+                    , A.style "padding" "10px 20px"
+                    , A.style "font-size" "14px"
+                    ]
+                    [ text "Generate AI Report" ]
+                ]
+
+        Just report ->
+            H.div [ A.class "report-section" ]
+                [ H.div [ A.class "report-summary" ]
+                    [ H.h3 []
+                        [ text "AI Summary" ]
+                    , H.p []
+                        [ text
+                            (if String.isEmpty report.summary then
+                                "Generating summary..."
+
+                             else
+                                report.summary
+                            )
+                        ]
+                    ]
+                , if not (List.isEmpty report.suggestions) then
+                    H.div [ A.class "suggestions" ]
+                        (List.map viewSuggestion report.suggestions)
+
+                  else
+                    H.div [] []
+                ]
+
+
+viewSuggestion : Suggestion -> Html Msg
+viewSuggestion suggestion =
+    H.a
+        [ A.href "#"
+        , A.class "suggestion"
+        ]
+        [ text suggestion.text ]
+
+
+viewEventsSection : List Event -> Model -> Html Msg
+viewEventsSection events model =
+    H.div [ A.class "events-section" ]
+        [ H.h3 []
+            [ text "Events" ]
+        , H.div [ A.class "events-list" ]
+            (events
+                |> List.take 50
+                -- Limit to first 50 events for performance
+                |> List.map (viewEvent model)
+            )
+        ]
+
+
+viewEvent : Model -> Event -> Html Msg
+viewEvent model event =
+    let
+        isHovered =
+            not (Set.isEmpty (Set.intersect model.hover event.tags))
+
+        eventDate =
+            -- TODO: Properly format timestamp to date string
+            String.fromFloat event.start
+    in
+    H.div
+        [ A.class "event-card"
+        , A.style "background-color"
+            (if isHovered then
+                "#f8f8f8"
+
+             else
+                "white"
+            )
+        , A.onMouseEnter (Hovered event.tags)
+        , A.onMouseLeave (Hovered Set.empty)
+        ]
+        [ H.div [ A.class "event-header" ]
+            [ H.a
+                [ A.href event.url
+                , A.target "_blank"
+                , A.class "event-link"
+                ]
+                [ text (String.left 60 event.summary) ]
+            ]
+        , H.div [ A.class "event-meta" ]
+            [ H.span [] [ text eventDate ]
+            , if event.insertions > 0 || event.deletions > 0 then
+                H.span [ A.class "event-changes" ]
+                    [ text ("+" ++ String.fromInt event.insertions ++ " -" ++ String.fromInt event.deletions) ]
+
+              else
+                H.span [] []
+            , H.div [ A.class "event-tags" ]
+                (event.tags
+                    |> Set.toList
+                    |> List.map
+                        (\tag ->
+                            H.span
+                                [ A.class "tag"
+                                ]
+                                [ text tag ]
+                        )
+                )
+            ]
+        , if not (String.isEmpty event.summary) && String.length event.summary > 60 then
+            H.p [ A.class "event-description" ]
+                [ text event.summary ]
+
+          else
+            H.div [] []
+        ]
+
+
+viewVisualization : List Event -> Html Msg
+viewVisualization events =
+    -- TODO: Add actual histogram/chart visualization
+    -- This would require a charting library or custom SVG implementation
+    H.div [ A.class "visualization" ]
+        [ H.h3 []
+            [ text "Activity Visualization" ]
+        , H.p []
+            [ text ("Total events: " ++ String.fromInt (List.length events))
+            , text " | "
+            , text ("Total additions: " ++ String.fromInt (events |> List.map .insertions |> List.sum))
+            , text " | "
+            , text ("Total deletions: " ++ String.fromInt (events |> List.map .deletions |> List.sum))
+            ]
+
+        -- TODO: Add actual histogram chart here
+        ]
