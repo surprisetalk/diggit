@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <title>scrapsheets</title>
+    <meta charset="UTF-8" />
+    <meta name="author" content="Taylor Troesh" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light" />
+    <link href="/style.css" rel="stylesheet" />
+    <script src="https://unpkg.com/@isomorphic-git/lightning-fs"></script>
+    <script src="https://unpkg.com/isomorphic-git"></script>
+    <script src="/index.js"></script>
+  </head>
+  <body>
+    <div id="elm"></div>
+    <script type="module">
+      import http from "https://unpkg.com/isomorphic-git/http/web/index.js";
+      window.fs = new LightningFS("fs");
+      window.pfs = window.fs.promises;
+      try {
+        const app = Elm.Main.init({
+          node: document.getElementById("elm"),
+          flags: {},
+        });
+
+        // TODO: app.ports.subscribe.repoRequested
+        // TODO:   // TODO: git clone
+        // TODO:   app.ports.send.repoLoaded
+
+        // TODO: Localstorage stuff
+        //
+      } catch (error) {
+        console.error(error);
+        app.ports.docErrored.send(error?.message ?? "Something went wrong.");
+      }
+    </script>
+  </body>
+</html>
