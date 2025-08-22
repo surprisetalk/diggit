@@ -22,46 +22,6 @@ body * {
   width: 100vw;
 }
 
-.flex {
-  display: flex;
-}
-
-.flex-wrap {
-  flex-wrap: wrap;
-}
-
-.flex-col {
-  flex-direction: column;
-}
-
-.flex-row {
-  flex-direction: row;
-}
-
-.flex-1 {
-  flex: 1;
-}
-
-.gap-5 {
-  gap: 5px;
-}
-
-.gap-8 {
-  gap: 8px;
-}
-
-.gap-10 {
-  gap: 10px;
-}
-
-.gap-15 {
-  gap: 15px;
-}
-
-.gap-20 {
-  gap: 20px;
-}
-
 /* Sidebar */
 .sidebar {
   padding: 20px;
@@ -129,7 +89,7 @@ body * {
   gap: 10px;
 }
 
-.form-input {
+.input {
   flex: 1;
   padding: 8px;
   border: 1px solid #30363d;
@@ -138,7 +98,7 @@ body * {
   color: #c9d1d9;
 }
 
-.form-input-small {
+.small-input {
   flex: 1;
   padding: 8px;
   border: 1px solid #30363d;
@@ -149,40 +109,57 @@ body * {
 }
 
 /* Buttons */
-.btn {
+.primary-btn {
   padding: 8px 15px;
   border: none;
   border-radius: 4px;
   cursor: pointer;
-}
-
-.btn-primary {
   background-color: #238636;
   color: white;
 }
 
-.btn-primary[disabled] {
+.primary-btn[disabled] {
   background-color: #21262d;
   color: #484f58;
 }
 
-.btn-secondary {
+.secondary-btn {
+  padding: 8px 15px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
   background-color: #21262d;
   color: #c9d1d9;
   border: 1px solid #30363d;
 }
 
-.btn-small {
+.small-btn {
   padding: 4px 8px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
   font-size: 12px;
+  background-color: #21262d;
+  color: #c9d1d9;
+  border: 1px solid #30363d;
 }
 
-.btn-tag-active {
+.active-tag-btn {
+  padding: 4px 8px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
   background-color: #238636;
   color: white;
 }
 
-.btn-tag-exclude {
+.exclude-tag-btn {
+  padding: 4px 8px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
   background-color: #da3633;
   color: white;
 }

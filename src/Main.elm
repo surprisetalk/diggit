@@ -692,15 +692,6 @@ buildUrl filters =
 view : Model -> Browser.Document Msg
 view model =
     let
-        flex =
-            H.div << (::) (A.class "flex flex-wrap")
-
-        rows =
-            H.div << (::) (A.class "flex flex-col")
-
-        cols =
-            H.div << (::) (A.class "flex flex-row")
-
         filteredEvents =
             allEvents model
                 |> List.filter
@@ -810,12 +801,12 @@ viewRepoSection model =
                     , A.placeholder "owner/repo"
                     , A.value model.form.repo
                     , A.onInput RepoUrlChanged
-                    , A.class "form-input"
+                    , A.class "input"
                     ]
                     []
                 , H.button
                     [ A.type_ "submit"
-                    , A.class "btn btn-primary"
+                    , A.class "primary-btn"
                     ]
                     [ text "Load" ]
                 ]
@@ -841,7 +832,7 @@ viewFiltersSection model filteredEvents =
                 , A.placeholder "Start date"
                 , A.value model.form.start
                 , A.onInput StartChanged
-                , A.class "form-input-small"
+                , A.class "small-input"
                 ]
                 []
             , H.input
@@ -849,7 +840,7 @@ viewFiltersSection model filteredEvents =
                 , A.placeholder "End date"
                 , A.value model.form.end
                 , A.onInput EndChanged
-                , A.class "form-input-small"
+                , A.class "small-input"
                 ]
                 []
             ]
@@ -868,7 +859,7 @@ viewTagsSection model tagFrequencies =
                         (\tag ->
                             H.button
                                 [ A.onClick (TagRemoved tag)
-                                , A.class ("btn btn-small " ++ iif (String.startsWith "-" tag) "btn-tag-exclude" "btn-tag-active")
+                                , A.class (iif (String.startsWith "-" tag) "exclude-tag-btn" "active-tag-btn")
                                 ]
                                 [ text ("× " ++ tag) ]
                         )
@@ -890,20 +881,20 @@ tagButton : String -> Msg -> Html Msg
 tagButton label msg =
     H.button
         [ A.onClick msg
-        , A.class "btn btn-secondary btn-small"
+        , A.class "small-btn"
         ]
         [ text label ]
 
 
 viewClaudeForm : Model -> Html Msg
 viewClaudeForm model =
-    H.form [ A.class "claude-form", S.displayFlex, S.marginBottomPx 20, S.gapPx 10, S.alignItemsCenter ]
+    H.form [ A.class "claude-form", S.display S.flex, S.marginBottomPx 20, S.gapPx 10, S.alignItems S.center ]
         [ H.input
             [ A.type_ "password"
             , A.placeholder "Anthropic API Key"
             , A.value model.claude.auth
             , A.onInput ClaudeAuthChanged
-            , A.class "form-input"
+            , A.class "input"
             , S.widthPx 200
             , S.marginRightAuto
             ]
@@ -918,7 +909,7 @@ viewClaudeForm model =
             ]
         , H.button
             [ A.onClick ReportRequested
-            , A.class "btn btn-primary"
+            , A.class "primary-btn"
             , A.type_ "button"
             , A.disabled (model.repo |> Maybe.andThen .report |> (/=) Nothing)
             ]
@@ -937,7 +928,7 @@ viewMain model filteredEvents =
                 viewEmptyState
 
             Just repo ->
-                H.div [ S.displayFlex, S.flexDirectionColumn, S.width "100%" ]
+                H.div [ S.display S.flex, S.flexDirection S.column, S.width "100%" ]
                     [ viewClaudeForm model
                     , viewReportSection repo model
                     , viewEventsSection filteredEvents model
