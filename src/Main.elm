@@ -47,49 +47,10 @@ iif c a b =
         b
 
 
-commas : String -> String
-commas =
-    String.reverse
-        >> String.toList
-        >> List.indexedMap (\i c -> iif (i > 0 && modBy 3 i == 0) [ ',', c ] [ c ])
-        >> List.concat
-        >> String.fromList
-        >> String.reverse
-
-
-round2 : Float -> Float
-round2 =
-    (*) 100 >> floor >> toFloat >> flip (/) 100
-
-
-createHistogramData : List Event -> List { day : Float, count : Float }
-createHistogramData events =
+formatEventDate : Time.Zone -> Time.Posix -> String
+formatEventDate timezone posix =
     let
-        weekInMs =
-            7 * 24 * 60 * 60 * 1000
-
-        groupEventsByWeek eventList =
-            eventList
-                |> List.map (\event -> floor (event.start / weekInMs) * weekInMs)
-                |> List.foldl (\week counts -> Dict.update week (Maybe.withDefault 0 >> (+) 1 >> Just) counts) Dict.empty
-                |> Dict.toList
-                |> List.map (\( week, count ) -> { day = toFloat week, count = toFloat count })
-    in
-    if List.isEmpty events then
-        []
-
-    else
-        groupEventsByWeek events
-
-
-formatEventDate : Time.Zone -> Float -> String
-formatEventDate timezone time =
-    let
-        posix =
-            time
-                |> round
-                |> Time.millisToPosix
-
+        -- posix is already Time.Posix, no conversion needed
         date =
             Date.fromPosix timezone posix
 
@@ -104,23 +65,6 @@ formatEventDate timezone time =
                 |> String.padLeft 2 '0'
     in
     Date.format "yyyy-MM-dd" date ++ " " ++ hour ++ ":" ++ minute
-
-
-usd : Float -> String
-usd amount =
-    let
-        ( intPart, decPart ) =
-            case amount |> abs |> round2 |> String.fromFloat |> String.split "." of
-                a :: b :: _ ->
-                    ( a, String.left 2 <| String.padRight 2 '0' b )
-
-                a :: [] ->
-                    ( a, "00" )
-
-                [] ->
-                    ( "0", "00" )
-    in
-    iif (amount < 0) "-" "" ++ "$" ++ commas intPart ++ "." ++ decPart
 
 
 
@@ -176,10 +120,6 @@ type alias Id =
     String
 
 
-type alias Time =
-    Float
-
-
 type alias Filters =
     { repo : String
     , start : String
@@ -192,8 +132,8 @@ type alias Filters =
 type alias Event =
     { id : Id
     , url : String
-    , start : Time
-    , end : Maybe Time
+    , start : Time.Posix
+    , end : Maybe Time.Posix
     , insertions : Int
     , deletions : Int
     , tags : Set Tag
@@ -284,7 +224,7 @@ type RemoteData e a
 
 type alias Error =
     { message : String
-    , timestamp : Time
+    , timestamp : Time.Posix
     }
 
 
@@ -327,24 +267,36 @@ allEvents =
                     , Dict.values repo.github.events
                     , repo.report |> Maybe.map .events |> Maybe.withDefault []
                     ]
-                    |> List.sortBy (.start >> negate)
+                    |> List.sortBy (.start >> Time.posixToMillis >> negate)
             )
         >> Maybe.withDefault []
+
+
+
+-- TODO: clusters n = allEvents model |> Random.List.shuffle |> Random.map (KMeans.clusterBy eventVector n)
 
 
 eventVector : List Tag -> Event -> List Float
 eventVector allTags event =
     let
+        startMillis =
+            Time.posixToMillis event.start |> toFloat
+
+        endMillis =
+            event.end
+                |> Maybe.map (Time.posixToMillis >> toFloat)
+                |> Maybe.withDefault startMillis
+
         duration =
             case event.end of
                 Nothing ->
                     0
 
                 Just endTime ->
-                    endTime - event.start
+                    toFloat (Time.posixToMillis endTime - Time.posixToMillis event.start)
     in
-    [ event.start
-    , Maybe.withDefault event.start event.end
+    [ startMillis
+    , endMillis
     , duration
     , toFloat event.insertions
     , toFloat event.deletions
@@ -353,8 +305,6 @@ eventVector allTags event =
 
 
 
--- TODO: clusters n = allEvents model |> Random.List.shuffle |> Random.map (KMeans.clusterBy eventVector n)
---
 ---- PARSER -------------------------------------------------------------------
 
 
@@ -376,8 +326,8 @@ eventDecoder =
     D.map8 Event
         (D.field "id" D.string)
         (D.field "url" D.string)
-        (D.field "start" D.float)
-        (D.maybe (D.field "end" D.float))
+        (D.field "start" (D.float |> D.map (round >> Time.millisToPosix)))
+        (D.maybe (D.field "end" (D.float |> D.map (round >> Time.millisToPosix))))
         (D.field "insertions" D.int)
         (D.field "deletions" D.int)
         (D.field "tags" (D.list D.string |> D.map Set.fromList))
@@ -469,7 +419,7 @@ githubEventsDecoder =
             )
             (D.field "id" D.string)
             (D.oneOf [ D.field "url" D.string, D.succeed "" ])
-            (D.field "created_at" (D.string |> D.map iso8601ToTime))
+            (D.field "created_at" Iso8601.decoder)
             (D.field "actor" (D.field "login" D.string))
             (D.field "type" D.string)
             (D.field "payload" D.value)
@@ -492,21 +442,11 @@ githubIssuesDecoder =
                   , deletions = 0
                   , tags =
                         Set.fromList
-                            ([ "github"
-                             , if isPr then
-                                "pr"
-
-                               else
-                                "issue"
-                             , "@" ++ user
-                             ]
-                                ++ (if closedAt /= Nothing then
-                                        [ "closed" ]
-
-                                    else
-                                        [ "open" ]
-                                   )
-                            )
+                            [ "github"
+                            , iif isPr "pr" "issue"
+                            , "@" ++ user
+                            , iif (closedAt /= Nothing) "closed" "open"
+                            ]
                   , summary = title
                   }
                 )
@@ -514,59 +454,13 @@ githubIssuesDecoder =
             (D.field "number" D.int)
             (D.field "title" D.string)
             (D.field "html_url" D.string)
-            (D.field "created_at" (D.string |> D.map iso8601ToTime))
-            (D.field "updated_at" (D.string |> D.map iso8601ToTime))
-            (D.maybe (D.field "closed_at" (D.string |> D.map iso8601ToTime)))
+            (D.field "created_at" Iso8601.decoder)
+            (D.field "updated_at" Iso8601.decoder)
+            (D.maybe (D.field "closed_at" Iso8601.decoder))
             (D.field "user" (D.field "login" D.string))
             (D.maybe (D.field "pull_request" D.value) |> D.map ((/=) Nothing))
         )
         |> D.map Dict.fromList
-
-
-iso8601ToTime : String -> Time
-iso8601ToTime isoString =
-    case String.split "T" isoString of
-        [ datePart, timePart ] ->
-            case ( String.split "-" datePart, String.split ":" (String.replace "Z" "" timePart) ) of
-                ( [ year, month, day ], [ hour, minute, second ] ) ->
-                    let
-                        yearInt =
-                            String.toInt year |> Maybe.withDefault 1970
-
-                        monthInt =
-                            String.toInt month |> Maybe.withDefault 1
-
-                        dayInt =
-                            String.toInt day |> Maybe.withDefault 1
-
-                        hourInt =
-                            String.toInt hour |> Maybe.withDefault 0
-
-                        minuteInt =
-                            String.toInt minute |> Maybe.withDefault 0
-
-                        secondFloat =
-                            String.toFloat (String.split "." second |> List.head |> Maybe.withDefault "0") |> Maybe.withDefault 0
-
-                        days =
-                            (yearInt - 1970) * 365 + (monthInt - 1) * 30 + (dayInt - 1)
-
-                        hours =
-                            days * 24 + hourInt
-
-                        minutes =
-                            hours * 60 + minuteInt
-
-                        seconds =
-                            toFloat minutes * 60 + secondFloat
-                    in
-                    seconds * 1000
-
-                _ ->
-                    0
-
-        _ ->
-            0
 
 
 formatGithubEventSummary : String -> D.Value -> String
@@ -602,11 +496,11 @@ encodeEvent event =
     E.object
         [ ( "id", E.string event.id )
         , ( "url", E.string event.url )
-        , ( "start", E.float event.start )
+        , ( "start", E.float (Time.posixToMillis event.start |> toFloat) )
         , ( "end"
           , case event.end of
                 Just endTime ->
-                    E.float endTime
+                    E.float (Time.posixToMillis endTime |> toFloat)
 
                 Nothing ->
                     E.null
@@ -910,16 +804,16 @@ update msg ({ form, claude } as model) =
                         latestEventTime =
                             repo.github.events
                                 |> Dict.values
-                                |> List.map .start
+                                |> List.map (.start >> Time.posixToMillis)
                                 |> List.maximum
-                                |> Maybe.map (round >> Time.millisToPosix)
+                                |> Maybe.map Time.millisToPosix
 
                         latestIssueTime =
                             repo.github.issues
                                 |> Dict.values
-                                |> List.map .start
+                                |> List.map (.start >> Time.posixToMillis)
                                 |> List.maximum
-                                |> Maybe.map (round >> Time.millisToPosix)
+                                |> Maybe.map Time.millisToPosix
                     in
                     ( { model | repo = Just repo }
                     , Cmd.batch
@@ -1077,7 +971,7 @@ update msg ({ form, claude } as model) =
 
 addError : String -> Model -> Model
 addError message model =
-    { model | errors = { message = message, timestamp = 0 } :: model.errors }
+    { model | errors = { message = message, timestamp = Time.millisToPosix 0 } :: model.errors }
 
 
 httpErrorToString : Http.Error -> String
@@ -1400,7 +1294,7 @@ viewHistogram timezone events =
                     ]
                   <|
                     Dict.toList <|
-                        List.foldl (\event -> Dict.update (round event.start // (30 * 24 * 60 * 60 * 1000) * 30 * 24 * 60 * 60 * 1000) (Maybe.withDefault 1 >> (+) 1 >> Just)) Dict.empty <|
+                        List.foldl (\event -> Dict.update (Time.posixToMillis event.start // (30 * 24 * 60 * 60 * 1000) * 30 * 24 * 60 * 60 * 1000) (Maybe.withDefault 1 >> (+) 1 >> Just)) Dict.empty <|
                             events
                 , C.xLabels
                     [ CA.noGrid
@@ -1689,7 +1583,7 @@ viewMain model filteredEvents =
                 viewEmptyState
 
             Just _ ->
-                H.div [ S.displayFlex, S.flexDirectionColumn, S.width "100%" ]
+                H.div []
                     [ viewEventsSection filteredEvents model
                     , viewVisualization filteredEvents
                     ]
@@ -1712,16 +1606,16 @@ viewSuggestion suggestion =
 
 viewEventsSection : List Event -> Model -> Html Msg
 viewEventsSection events model =
-    H.div [ A.class "events-section" ]
-        [ H.div [ A.class "events-list" ]
-            (events
-                |> List.take 1000
-                -- Limit to first 1000 events for performance
-                |> List.map (viewEvent model)
-            )
+    H.div [ A.class "events-list" ]
+        (events
+            |> List.take 1000
+            -- Limit to first 1000 events for performance
+            |> List.map (viewEvent model)
+        )
 
-        -- TODO: If showing exactly 1000, then display a little message that says that 1000 events is maximum.
-        ]
+
+
+-- TODO: If showing exactly 1000, then display a little message that says that 1000 events is maximum.
 
 
 viewEvent : Model -> Event -> Html Msg
