@@ -116,6 +116,9 @@ port pageErrored : (String -> msg) -> Sub msg
 port progressReported : ({ message : String, progress : Float } -> msg) -> Sub msg
 
 
+port saveToLocalStorage : { key : String, value : String } -> Cmd msg
+
+
 
 ---- MAIN ---------------------------------------------------------------------
 
@@ -626,10 +629,14 @@ update msg ({ form, claude } as model) =
                     )
 
         ClaudeModelChanged model_ ->
-            ( { model | claude = { claude | model = model_ } }, Cmd.none )
+            ( { model | claude = { claude | model = model_ } }
+            , saveToLocalStorage { key = "claudeModel", value = model_ }
+            )
 
         ClaudeAuthChanged auth ->
-            ( { model | claude = { claude | auth = auth } }, Cmd.none )
+            ( { model | claude = { claude | auth = auth } }
+            , saveToLocalStorage { key = "claudeAuth", value = auth }
+            )
 
         ClaudeResponseReceived result ->
             case ( result, model.repo ) of

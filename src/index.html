@@ -27,6 +27,10 @@
           },
         });
 
+        app.ports.saveToLocalStorage.subscribe(({ key, value }) => {
+          localStorage.setItem(key, value);
+        });
+
         let cache = {};
         let loadInterval;
 
