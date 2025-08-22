@@ -1036,298 +1036,10 @@ collectGithubUsers events =
 ---- VIEW ---------------------------------------------------------------------
 
 
-view : Model -> Browser.Document Msg
-view model =
-    let
-        filteredEvents =
-            allEvents model
-                |> List.filter
-                    (\event ->
-                        List.all identity
-                            [ String.isEmpty model.route.start || (model.route.start <= formatEventDate model.timezone event.start)
-                            , String.isEmpty model.route.end || (event.end |> Maybe.map (\e -> formatEventDate model.timezone e <= model.route.end) |> Maybe.withDefault True)
-                            , Set.isEmpty model.route.tags || Set.isEmpty (Set.diff model.route.tags event.tags)
-                            , String.isEmpty model.route.query || String.contains (String.toLower model.route.query) (String.toLower event.summary)
-                            ]
-                    )
-
-        allTags =
-            allEvents model
-                |> List.map .tags
-                |> List.foldl Set.union Set.empty
-                |> Set.toList
-
-        -- TODO: Calculate tag frequencies for filtered events
-        filteredTagFrequencies =
-            filteredEvents
-                |> List.map .tags
-                |> List.concatMap Set.toList
-                |> List.foldl
-                    (\tag dict ->
-                        Dict.update tag
-                            (Maybe.withDefault 0 >> (+) 1 >> Just)
-                            dict
-                    )
-                    Dict.empty
-                |> Dict.toList
-                |> List.sortBy (Tuple.second >> negate)
-    in
-    { title = "diggit"
-    , body =
-        [ H.div [ A.class "app-layout" ]
-            [ viewAside model filteredEvents allTags filteredTagFrequencies
-            , viewMain model filteredEvents
-            , viewClaudeAside model filteredEvents
-            , viewErrors model
-            ]
-        ]
-    }
-
-
-viewAside : Model -> List Event -> List Tag -> List ( Tag, Int ) -> Html Msg
-viewAside model filteredEvents allTags tagFrequencies =
-    H.aside [ A.class "sidebar", S.borderRight "1px solid #30363d" ]
-        [ viewHeader
-        , viewRepoSection model
-        , viewFiltersSection model filteredEvents
-        , viewTagsSection model tagFrequencies
-        ]
-
-
-viewHeader : Html Msg
-viewHeader =
-    H.header [ A.class "header" ]
-        [ H.h1 [] [ H.a [ A.href "/" ] [ text "DIGGIT.DEV" ] ]
-        , H.h2 [] [ text "for architecture archaeologists" ]
-        , H.div [ A.class "header-links" ]
-            [ H.a [ A.href "https://taylor.town", A.target "_blank" ] [ text "by taylor.town" ]
-            , H.a [ A.href "https://github.com/surprisetalk/diggit", A.target "_blank" ] [ text "view on github" ]
-            ]
-        ]
-
-
-viewRepoSection : Model -> Html Msg
-viewRepoSection model =
-    H.section []
-        [ H.form [ A.onSubmit RepoUrlSubmitted, A.class "form" ]
-            [ H.div [ A.class "form-row" ]
-                [ H.input
-                    [ A.type_ "text"
-                    , A.placeholder "owner/repo"
-                    , A.value model.form.repo
-                    , A.onInput RepoUrlChanged
-                    , A.class "input"
-                    ]
-                    []
-                , H.button
-                    [ A.type_ "submit"
-                    , A.class "primary-btn"
-                    ]
-                    [ text "Load" ]
-                ]
-            ]
-        , H.div [ A.class "repo-list" ]
-            (List.map (\repo -> H.a [ A.href ("/" ++ repo) ] [ text repo ])
-                model.repos
-            )
-        ]
-
-
-viewHistogram : Time.Zone -> List Event -> Html Msg
-viewHistogram timezone events =
-    if List.isEmpty events then
-        H.div [] []
-
-    else
-        -- TODO: Selecting/dragging should set start/end.
-        -- TODO: Hovering should have some effect to indicate that selecting/dragging is possible.
-        H.div [ A.class "histogram-container", S.heightPx 120, S.marginTopPx 20, S.marginBottomPx 10 ]
-            [ C.chart
-                [ CA.height 120
-                , CA.width 400
-                , CA.padding { top = 0, bottom = 0, left = 0, right = 0 }
-                ]
-                [ C.bars
-                    [ CA.x1 (Tuple.first >> toFloat)
-                    ]
-                    [ C.bar (Tuple.second >> logBase 10) [ CA.color "#0969da", CA.opacity 0.8 ]
-                    ]
-                  <|
-                    Dict.toList <|
-                        List.foldl (\event -> Dict.update (Time.posixToMillis event.start // (30 * day) * 30 * day) (Maybe.withDefault 1 >> (+) 1 >> Just)) Dict.empty <|
-                            events
-                , C.xLabels
-                    [ CA.noGrid
-                    , CA.amount 4
-                    , CA.times timezone
-                    ]
-                ]
-            ]
-
-
-viewFiltersSection : Model -> List Event -> Html Msg
-viewFiltersSection model filteredEvents =
-    H.section []
-        [ H.div [ A.class "filter-count" ]
-            [ H.div [ A.class "filter-info" ]
-                [ text ("Showing " ++ String.fromInt (List.length filteredEvents) ++ " events") ]
-            ]
-        , H.div [ A.class "form-row" ]
-            [ H.input
-                [ A.type_ "text"
-                , A.placeholder "Search events..."
-                , A.value model.form.query
-                , A.onInput QueryChanged
-                , A.class "input"
-                ]
-                []
-            ]
-        , viewHistogram model.timezone filteredEvents
-        , H.div [ A.class "form-row" ]
-            [ H.input
-                [ A.type_ "date"
-                , A.placeholder "Start date"
-                , A.value model.form.start
-                , A.onInput StartChanged
-                , A.class "small-input"
-                ]
-                []
-            , H.input
-                [ A.type_ "date"
-                , A.placeholder "End date"
-                , A.value model.form.end
-                , A.onInput EndChanged
-                , A.class "small-input"
-                ]
-                []
-            ]
-        ]
-
-
-viewTagsSection : Model -> List ( Tag, Int ) -> Html Msg
-viewTagsSection model tagFrequencies =
-    H.section []
-        [ H.div []
-            [ H.div [ A.class "section-title" ]
-                [ text "Active filters" ]
-            , H.div [ A.class "tag-filters" ]
-                (Set.toList model.form.tags
-                    |> List.map
-                        (\tag ->
-                            H.button
-                                [ A.onClick (TagRemoved tag)
-                                , A.class (iif (String.startsWith "-" tag) "exclude-tag-btn" "active-tag-btn")
-                                ]
-                                [ text ("× " ++ tag) ]
-                        )
-                )
-            ]
-        , iif (List.isEmpty tagFrequencies) (text "") <|
-            H.div []
-                [ H.div [ A.class "section-title" ] [ text "Popular tags" ]
-                , H.div [ A.class "tag-filters" ]
-                    (tagFrequencies
-                        |> List.filter (\( tag, _ ) -> not (Set.member tag model.form.tags))
-                        |> List.take 100
-                        |> List.map (\( tag, count ) -> tagButton (tag ++ " (" ++ String.fromInt count ++ ")") (TagAdded tag))
-                    )
-                ]
-        ]
-
-
-tagButton : String -> Msg -> Html Msg
-tagButton label msg =
-    H.button [ A.onClick msg, A.class "small-btn" ]
-        [ text label ]
-
-
-viewApiCheckbox : String -> String -> Bool -> Html Msg
-viewApiCheckbox field label checked =
-    H.label [ S.display "flex", S.alignItems "center", S.gap "5px", S.cursor "pointer" ]
-        [ H.input
-            [ A.type_ "checkbox"
-            , A.checked checked
-            , A.onCheck (ApiPreviewToggled field)
-            ]
-            []
-        , H.span [] [ text label ]
-        ]
-
-
 summarizerPrompt : String
 summarizerPrompt =
     -- TODO: Add repo name, e.g. github.com/owner/repo
     "Please provide a comprehensive summary of this repository's development activity in markdown format with links where possible.\nInclude key insights about development patterns, major contributors, and notable changes.\nUse markdown features like links to commits/issues/PRs, headings, lists, and code blocks to make the output well-structured and navigable."
-
-
-viewClaudeAside : Model -> List Event -> Html Msg
-viewClaudeAside model filteredEvents =
-    let
-        reportStatus =
-            model.repo
-                |> Maybe.andThen .report
-
-        apiPreviewContent =
-            case reportStatus of
-                Nothing ->
-                    H.pre [ A.class "api-preview" ]
-                        [ text (formatEventsForApi model.timezone model.apiPreviewOptions filteredEvents ++ "\n\n" ++ summarizerPrompt) ]
-
-                Just report ->
-                    if String.isEmpty report.summary then
-                        H.div [ A.class "api-preview" ]
-                            [ H.p [ S.padding "20px", S.textAlign "center" ]
-                                [ text "Generating summary..." ]
-                            ]
-
-                    else
-                        H.div [ A.class "api-preview", S.padding "20px" ]
-                            [ Markdown.toHtml [] report.summary ]
-    in
-    H.aside [ A.class "sidebar", S.borderLeft "1px solid #30363d" ]
-        [ H.section []
-            [ H.h3 [] [ text "Claude Settings" ]
-            , H.div [ A.class "claude-form" ]
-                [ H.input
-                    [ A.type_ "password"
-                    , A.placeholder "Anthropic API Key"
-                    , A.value model.claude.auth
-                    , A.onInput ClaudeAuthChanged
-                    , A.class "input"
-                    ]
-                    []
-                , H.select
-                    [ A.onInput ClaudeModelChanged
-                    , A.class "select"
-                    ]
-                    [ H.option [ A.value "opus41", A.selected (model.claude.model == "opus41") ] [ text "Opus 4.1" ]
-                    , H.option [ A.value "sonnet41", A.selected (model.claude.model == "sonnet41") ] [ text "Sonnet 4.1" ]
-                    , H.option [ A.value "haiku35", A.selected (model.claude.model == "haiku35") ] [ text "Haiku 3.5" ]
-                    ]
-                , H.button
-                    [ A.onClick ReportRequested
-                    , A.class "primary-btn"
-                    , A.type_ "button"
-                    , A.disabled (reportStatus /= Nothing)
-                    ]
-                    [ text "Generate Report" ]
-                ]
-            ]
-        , H.section []
-            [ H.h3 [] [ text "API Preview" ]
-            , H.div [ A.class "api-preview-options", S.padding "10px", S.display "flex", S.flexWrap "wrap", S.gap "10px" ]
-                [ viewApiCheckbox "date" "Date" model.apiPreviewOptions.date
-                , viewApiCheckbox "time" "Time" model.apiPreviewOptions.time
-                , viewApiCheckbox "ext" "Ext" model.apiPreviewOptions.ext
-                , viewApiCheckbox "dir" "Dir" model.apiPreviewOptions.dir
-                , viewApiCheckbox "branch" "Branch" model.apiPreviewOptions.branch
-                , viewApiCheckbox "author" "Author" model.apiPreviewOptions.author
-                , viewApiCheckbox "title" "Title" model.apiPreviewOptions.title
-                , viewApiCheckbox "description" "Description" model.apiPreviewOptions.description
-                ]
-            , apiPreviewContent
-            ]
-        ]
 
 
 formatEventsForApi : Time.Zone -> ApiPreviewOptions -> List Event -> String
@@ -1384,48 +1096,301 @@ formatEventsForApi timezone options events =
         |> String.join "\n"
 
 
-viewMain : Model -> List Event -> Html Msg
-viewMain model filteredEvents =
-    H.main_ [ A.class "main-content" ]
-        [ viewProgressBars model
-        , case model.repo of
-            Nothing ->
-                viewEmptyState
+view : Model -> Browser.Document Msg
+view model =
+    let
+        filteredEvents =
+            allEvents model
+                |> List.filter
+                    (\event ->
+                        List.all identity
+                            [ String.isEmpty model.route.start || (model.route.start <= formatEventDate model.timezone event.start)
+                            , String.isEmpty model.route.end || (event.end |> Maybe.map (\e -> formatEventDate model.timezone e <= model.route.end) |> Maybe.withDefault True)
+                            , Set.isEmpty model.route.tags || Set.isEmpty (Set.diff model.route.tags event.tags)
+                            , String.isEmpty model.route.query || String.contains (String.toLower model.route.query) (String.toLower event.summary)
+                            ]
+                    )
 
-            Just _ ->
-                H.div []
-                    [ viewEventsSection filteredEvents model
-                    , viewVisualization filteredEvents
+        filteredTagFrequencies =
+            filteredEvents
+                |> List.map .tags
+                |> List.concatMap Set.toList
+                |> List.foldl (\tag dict -> Dict.update tag (Maybe.withDefault 0 >> (+) 1 >> Just) dict) Dict.empty
+                |> Dict.toList
+                |> List.sortBy (Tuple.second >> negate)
+    in
+    { title = "diggit"
+    , body =
+        [ H.div [ A.class "app-layout" ]
+            [ -- LEFT SIDEBAR - Repository and filtering controls
+              H.aside [ A.class "sidebar", S.borderRight "1px solid #30363d" ]
+                [ -- Header section
+                  H.header [ A.class "header" ]
+                    [ H.h1 [] [ H.a [ A.href "/" ] [ text "DIGGIT.DEV" ] ]
+                    , H.h2 [] [ text "for architecture archaeologists" ]
+                    , H.div [ A.class "header-links" ]
+                        [ H.a [ A.href "https://taylor.town", A.target "_blank" ] [ text "by taylor.town" ]
+                        , H.a [ A.href "https://github.com/surprisetalk/diggit", A.target "_blank" ] [ text "view on github" ]
+                        ]
                     ]
+
+                -- Repository loading section
+                , H.section []
+                    [ H.form [ A.onSubmit RepoUrlSubmitted, A.class "form" ]
+                        [ H.div [ A.class "form-row" ]
+                            [ H.input
+                                [ A.type_ "text"
+                                , A.placeholder "owner/repo"
+                                , A.value model.form.repo
+                                , A.onInput RepoUrlChanged
+                                , A.class "input"
+                                ]
+                                []
+                            , H.button
+                                [ A.type_ "submit"
+                                , A.class "primary-btn"
+                                ]
+                                [ text "Load" ]
+                            ]
+                        ]
+                    , H.div [ A.class "repo-list" ]
+                        (List.map (\repo -> H.a [ A.href ("/" ++ repo) ] [ text repo ])
+                            model.repos
+                        )
+                    ]
+
+                -- Event filtering and visualization section
+                , H.section []
+                    [ H.div [ A.class "filter-count" ]
+                        [ H.div [ A.class "filter-info" ]
+                            [ text ("Showing " ++ String.fromInt (List.length filteredEvents) ++ " events") ]
+                        ]
+                    , H.div [ A.class "form-row" ]
+                        [ H.input
+                            [ A.type_ "text"
+                            , A.placeholder "Search events..."
+                            , A.value model.form.query
+                            , A.onInput QueryChanged
+                            , A.class "input"
+                            ]
+                            []
+                        ]
+
+                    -- Event histogram chart
+                    , if List.isEmpty filteredEvents then
+                        H.div [] []
+
+                      else
+                        -- TODO: Selecting/dragging should set start/end.
+                        -- TODO: Hovering should have some effect to indicate that selecting/dragging is possible.
+                        H.div [ A.class "histogram-container", S.heightPx 120, S.marginTopPx 20, S.marginBottomPx 10 ]
+                            [ C.chart
+                                [ CA.height 120
+                                , CA.width 400
+                                , CA.padding { top = 0, bottom = 0, left = 0, right = 0 }
+                                ]
+                                [ C.bars
+                                    [ CA.x1 (Tuple.first >> toFloat)
+                                    ]
+                                    [ C.bar (Tuple.second >> logBase 10) [ CA.color "#0969da", CA.opacity 0.8 ]
+                                    ]
+                                  <|
+                                    Dict.toList <|
+                                        List.foldl (\event -> Dict.update (Time.posixToMillis event.start // (30 * day) * 30 * day) (Maybe.withDefault 1 >> (+) 1 >> Just)) Dict.empty <|
+                                            filteredEvents
+                                , C.xLabels
+                                    [ CA.noGrid
+                                    , CA.amount 4
+                                    , CA.times model.timezone
+                                    ]
+                                ]
+                            ]
+
+                    -- Date range inputs
+                    , H.div [ A.class "form-row" ]
+                        [ H.input
+                            [ A.type_ "date"
+                            , A.placeholder "Start date"
+                            , A.value model.form.start
+                            , A.onInput StartChanged
+                            , A.class "small-input"
+                            ]
+                            []
+                        , H.input
+                            [ A.type_ "date"
+                            , A.placeholder "End date"
+                            , A.value model.form.end
+                            , A.onInput EndChanged
+                            , A.class "small-input"
+                            ]
+                            []
+                        ]
+                    ]
+
+                -- Tag filtering section
+                , H.section []
+                    [ H.div []
+                        [ H.div [ A.class "section-title" ]
+                            [ text "Active filters" ]
+                        , H.div [ A.class "tag-filters" ]
+                            (Set.toList model.form.tags
+                                |> List.map
+                                    (\tag ->
+                                        H.button
+                                            [ A.onClick (TagRemoved tag)
+                                            , A.class (iif (String.startsWith "-" tag) "exclude-tag-btn" "active-tag-btn")
+                                            ]
+                                            [ text ("× " ++ tag) ]
+                                    )
+                            )
+                        ]
+                    , iif (List.isEmpty filteredTagFrequencies) (text "") <|
+                        H.div []
+                            [ H.div [ A.class "section-title" ] [ text "Popular tags" ]
+                            , H.div [ A.class "tag-filters" ]
+                                (filteredTagFrequencies
+                                    |> List.filter (\( tag, _ ) -> not (Set.member tag model.form.tags))
+                                    |> List.take 100
+                                    |> List.map
+                                        (\( tag, count ) ->
+                                            H.button [ A.onClick (TagAdded tag), A.class "small-btn" ]
+                                                [ text (tag ++ " (" ++ String.fromInt count ++ ")") ]
+                                        )
+                                )
+                            ]
+                    ]
+                ]
+
+            -- MAIN CONTENT - Events display and progress
+            , H.main_ [ A.class "main-content" ]
+                [ -- Progress indicators
+                  H.div [ A.class "progress-container" ]
+                    (model.progress
+                        |> Dict.filter (\_ v -> v < 1)
+                        |> Dict.toList
+                        |> List.map viewProgressBar
+                    )
+
+                -- Events list (or empty state)
+                , case model.repo of
+                    Nothing ->
+                        H.div [ A.class "empty-state" ]
+                            [ H.h2 [] [ text "Welcome to Diggit" ]
+                            , H.p [] [ text "Select a repository to start exploring its architecture" ]
+                            ]
+
+                    Just _ ->
+                        -- TODO: If showing exactly 1000, then display a little message that says that 1000 events is maximum.
+                        H.div [ A.class "events-list" ]
+                            (filteredEvents
+                                |> List.take 1000
+                                -- Limit to first 1000 events for performance
+                                |> List.map (viewEvent model)
+                            )
+                ]
+
+            -- RIGHT SIDEBAR - Claude AI and API controls
+            , let
+                viewApiCheckbox field label checked =
+                    H.label [ S.display "flex", S.alignItems "center", S.gap "5px", S.cursor "pointer" ]
+                        [ H.input
+                            [ A.type_ "checkbox"
+                            , A.checked checked
+                            , A.onCheck (ApiPreviewToggled field)
+                            ]
+                            []
+                        , H.span [] [ text label ]
+                        ]
+              in
+              H.aside [ A.class "sidebar", S.borderLeft "1px solid #30363d" ]
+                [ -- Claude AI configuration section
+                  H.section []
+                    [ H.h3 [] [ text "Claude Settings" ]
+                    , H.div [ A.class "claude-form" ]
+                        [ H.input
+                            [ A.type_ "password"
+                            , A.placeholder "Anthropic API Key"
+                            , A.value model.claude.auth
+                            , A.onInput ClaudeAuthChanged
+                            , A.class "input"
+                            ]
+                            []
+                        , H.select
+                            [ A.onInput ClaudeModelChanged
+                            , A.class "select"
+                            ]
+                            [ H.option [ A.value "opus41", A.selected (model.claude.model == "opus41") ] [ text "Opus 4.1" ]
+                            , H.option [ A.value "sonnet41", A.selected (model.claude.model == "sonnet41") ] [ text "Sonnet 4.1" ]
+                            , H.option [ A.value "haiku35", A.selected (model.claude.model == "haiku35") ] [ text "Haiku 3.5" ]
+                            ]
+                        , H.button
+                            [ A.onClick ReportRequested
+                            , A.class "primary-btn"
+                            , A.type_ "button"
+                            , A.disabled (Maybe.andThen .report model.repo /= Nothing)
+                            ]
+                            [ text "Generate Report" ]
+                        ]
+                    ]
+
+                -- API preview configuration and output section
+                , H.section []
+                    [ H.h3 [] [ text "API Preview" ]
+                    , H.div [ A.class "api-preview-options", S.padding "10px", S.display "flex", S.flexWrap "wrap", S.gap "10px" ]
+                        [ viewApiCheckbox "date" "Date" model.apiPreviewOptions.date
+                        , viewApiCheckbox "time" "Time" model.apiPreviewOptions.time
+                        , viewApiCheckbox "ext" "Ext" model.apiPreviewOptions.ext
+                        , viewApiCheckbox "dir" "Dir" model.apiPreviewOptions.dir
+                        , viewApiCheckbox "branch" "Branch" model.apiPreviewOptions.branch
+                        , viewApiCheckbox "author" "Author" model.apiPreviewOptions.author
+                        , viewApiCheckbox "title" "Title" model.apiPreviewOptions.title
+                        , viewApiCheckbox "description" "Description" model.apiPreviewOptions.description
+                        ]
+                    , case Maybe.andThen .report model.repo of
+                        Nothing ->
+                            H.pre [ A.class "api-preview" ]
+                                [ text (formatEventsForApi model.timezone model.apiPreviewOptions filteredEvents ++ "\n\n" ++ summarizerPrompt) ]
+
+                        Just report ->
+                            if String.isEmpty report.summary then
+                                H.div [ A.class "api-preview" ]
+                                    [ H.p [ S.padding "20px", S.textAlign "center" ]
+                                        [ text "Generating summary..." ]
+                                    ]
+
+                            else
+                                H.div [ A.class "api-preview", S.padding "20px" ]
+                                    [ Markdown.toHtml [] report.summary ]
+                    ]
+                ]
+
+            -- Error display container
+            , H.div [ A.class "error-container" ] <|
+                List.indexedMap
+                    (\index error ->
+                        H.div [ A.class "error-item" ]
+                            [ H.div [ A.class "error-message" ] [ text error.message ]
+                            , H.button [ A.onClick (RemoveError index), A.class "error-close" ] [ text "×" ]
+                            ]
+                    )
+                    model.errors
+            ]
         ]
+    }
 
 
-viewEmptyState : Html Msg
-viewEmptyState =
-    H.div [ A.class "empty-state" ]
-        [ H.h2 [] [ text "Welcome to Diggit" ]
-        , H.p [] [ text "Select a repository to start exploring its architecture" ]
+viewProgressBar : ( String, Float ) -> Html Msg
+viewProgressBar ( message, progress ) =
+    H.div [ A.class "progress-item" ]
+        [ H.div [ A.class "progress-label" ] [ text message ]
+        , H.div [ A.class "progress-bar-container" ]
+            [ H.div
+                [ A.class "progress-bar-fill"
+                , S.width (String.fromFloat (progress * 100) ++ "%")
+                ]
+                []
+            ]
         ]
-
-
-viewSuggestion : Suggestion -> Html Msg
-viewSuggestion suggestion =
-    H.a [ A.href "#", A.class "suggestion" ]
-        [ text suggestion.text ]
-
-
-viewEventsSection : List Event -> Model -> Html Msg
-viewEventsSection events model =
-    H.div [ A.class "events-list" ]
-        (events
-            |> List.take 1000
-            -- Limit to first 1000 events for performance
-            |> List.map (viewEvent model)
-        )
-
-
-
--- TODO: If showing exactly 1000, then display a little message that says that 1000 events is maximum.
 
 
 viewEvent : Model -> Event -> Html Msg
@@ -1461,61 +1426,4 @@ viewEvent model event =
         , iif (not (String.isEmpty event.summary) && String.length event.summary > 60)
             (H.p [ A.class "event-description" ] [ text event.summary ])
             (text "")
-        ]
-
-
-viewVisualization : List Event -> Html Msg
-viewVisualization events =
-    -- TODO: Add actual histogram/chart visualization
-    -- This would require a charting library or custom SVG implementation
-    H.div [ A.class "visualization" ]
-        [ H.h3 []
-            [ text "Activity Visualization" ]
-        , H.p []
-            [ text ("Total events: " ++ String.fromInt (List.length events))
-            , text " | "
-            , text ("Total additions: " ++ String.fromInt (events |> List.map .insertions |> List.sum))
-            , text " | "
-            , text ("Total deletions: " ++ String.fromInt (events |> List.map .deletions |> List.sum))
-            ]
-
-        -- TODO: Add actual histogram chart here
-        ]
-
-
-viewProgressBars : Model -> Html Msg
-viewProgressBars model =
-    H.div [ A.class "progress-container" ]
-        (model.progress
-            |> Dict.filter (\_ v -> v < 1)
-            |> Dict.toList
-            |> List.map viewProgressBar
-        )
-
-
-viewProgressBar : ( String, Float ) -> Html Msg
-viewProgressBar ( message, progress ) =
-    H.div [ A.class "progress-item" ]
-        [ H.div [ A.class "progress-label" ] [ text message ]
-        , H.div [ A.class "progress-bar-container" ]
-            [ H.div
-                [ A.class "progress-bar-fill"
-                , S.width (String.fromFloat (progress * 100) ++ "%")
-                ]
-                []
-            ]
-        ]
-
-
-viewErrors : Model -> Html Msg
-viewErrors model =
-    H.div [ A.class "error-container" ] <|
-        List.indexedMap viewError model.errors
-
-
-viewError : Int -> Error -> Html Msg
-viewError index error =
-    H.div [ A.class "error-item" ]
-        [ H.div [ A.class "error-message" ] [ text error.message ]
-        , H.button [ A.onClick (RemoveError index), A.class "error-close" ] [ text "×" ]
         ]
