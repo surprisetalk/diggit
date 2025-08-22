@@ -17,6 +17,7 @@ import Html.Style as S
 import Http
 import Json.Decode as D
 import Json.Encode as E
+import Markdown
 import Set exposing (Set)
 import Task exposing (Task)
 import Time
@@ -395,6 +396,14 @@ suggestionDecoder =
         (D.field "prompt" D.string)
 
 
+claudeResponseDecoder : D.Decoder String
+claudeResponseDecoder =
+    D.field "content"
+        (D.index 0
+            (D.field "text" D.string)
+        )
+
+
 
 ---- INIT ---------------------------------------------------------------------
 
@@ -431,7 +440,6 @@ init flags url nav =
                 , model = Maybe.withDefault "sonnet41" flags.claudeModel
                 , history = []
                 }
-            , jobs = Array.empty
             , timezone = timezone
             }
     in
@@ -495,6 +503,7 @@ type Msg
     | ReportRequested
     | ClaudeModelChanged ClaudeModel
     | ClaudeAuthChanged String
+    | ClaudeResponseReceived (Result Http.Error String)
     | Hovered (Set Tag)
     | RepoLoaded D.Value
     | GithubEventsFetched (Result Http.Error (List Event))
@@ -586,11 +595,34 @@ update msg ({ form, claude } as model) =
                     ( model, Cmd.none )
 
                 Just repo ->
+                    let
+                        eventsText =
+                            formatEventsForApi model.timezone (allEvents model)
+
+                        summarizePrompt =
+                            "\n\nPlease provide a comprehensive summary of this repository's development activity in markdown format. Include key insights about development patterns, major contributors, and notable changes."
+
+                        fullPrompt =
+                            eventsText ++ summarizePrompt
+
+                        httpRequest =
+                            Http.request
+                                { method = "POST"
+                                , headers =
+                                    [ Http.header "x-api-key" model.claude.auth
+                                    , Http.header "anthropic-version" "2023-06-01"
+                                    , Http.header "content-type" "application/json"
+                                    , Http.header "anthropic-dangerous-direct-browser-access" "true"
+                                    ]
+                                , url = "https://api.anthropic.com/v1/messages"
+                                , body = Http.jsonBody (encodeClaudeRequest model.claude.model fullPrompt)
+                                , expect = Http.expectString ClaudeResponseReceived
+                                , timeout = Just 60000
+                                , tracker = Nothing
+                                }
+                    in
                     ( { model | repo = Just { repo | report = Just { summary = "", suggestions = [], events = [] } } }
-                    , Cmd.batch
-                        [-- TODO: clusters 10 |> Random.generate ReportTagClustered
-                         -- TODO: clusters 100 |> Random.generate ReportEventClustered
-                        ]
+                    , httpRequest
                     )
 
         ClaudeModelChanged model_ ->
@@ -598,6 +630,24 @@ update msg ({ form, claude } as model) =
 
         ClaudeAuthChanged auth ->
             ( { model | claude = { claude | auth = auth } }, Cmd.none )
+
+        ClaudeResponseReceived result ->
+            case ( result, model.repo ) of
+                ( Ok response, Just repo ) ->
+                    case D.decodeString claudeResponseDecoder response of
+                        Ok decodedResponse ->
+                            ( { model | repo = Just { repo | report = Just { summary = decodedResponse, suggestions = [], events = [] } } }
+                            , Cmd.none
+                            )
+
+                        Err _ ->
+                            ( addError "Failed to decode Claude response" model, Cmd.none )
+
+                ( Err httpError, _ ) ->
+                    ( addError ("Claude API error: " ++ httpErrorToString httpError) model, Cmd.none )
+
+                ( _, Nothing ) ->
+                    ( model, Cmd.none )
 
         Hovered tags ->
             ( { model | hover = tags }, Cmd.none )
@@ -698,6 +748,38 @@ buildUrl filters =
                 |> String.join "&"
     in
     base ++ iif (String.isEmpty params) "" ("?" ++ params)
+
+
+encodeClaudeRequest : String -> String -> E.Value
+encodeClaudeRequest model prompt =
+    E.object
+        [ ( "model", E.string (mapClaudeModel model) )
+        , ( "max_tokens", E.int 4096 )
+        , ( "messages"
+          , E.list identity
+                [ E.object
+                    [ ( "role", E.string "user" )
+                    , ( "content", E.string prompt )
+                    ]
+                ]
+          )
+        ]
+
+
+mapClaudeModel : String -> String
+mapClaudeModel model =
+    case model of
+        "opus41" ->
+            "claude-3-opus-20240229"
+
+        "sonnet41" ->
+            "claude-3-5-sonnet-20241022"
+
+        "haiku35" ->
+            "claude-3-5-haiku-20241022"
+
+        _ ->
+            "claude-3-5-sonnet-20241022"
 
 
 
@@ -900,6 +982,28 @@ tagButton label msg =
 
 viewClaudeAside : Model -> List Event -> Html Msg
 viewClaudeAside model filteredEvents =
+    let
+        reportStatus =
+            model.repo
+                |> Maybe.andThen .report
+
+        apiPreviewContent =
+            case reportStatus of
+                Nothing ->
+                    H.pre [ A.class "api-preview" ]
+                        [ text (formatEventsForApi model.timezone filteredEvents ++ "\n\nPlease provide a comprehensive summary of this repository's development activity in markdown format. Include key insights about development patterns, major contributors, and notable changes.") ]
+
+                Just report ->
+                    if String.isEmpty report.summary then
+                        H.div [ A.class "api-preview" ]
+                            [ H.p [ S.padding "20px", S.textAlign "center" ]
+                                [ text "Generating summary..." ]
+                            ]
+
+                    else
+                        H.div [ A.class "api-preview", S.padding "20px" ]
+                            [ Markdown.toHtml [] report.summary ]
+    in
     H.aside [ A.class "sidebar", S.borderLeft "1px solid #30363d" ]
         [ H.section []
             [ H.h3 [] [ text "Claude Settings" ]
@@ -924,14 +1028,14 @@ viewClaudeAside model filteredEvents =
                     [ A.onClick ReportRequested
                     , A.class "primary-btn"
                     , A.type_ "button"
-                    , A.disabled (model.repo |> Maybe.andThen .report |> (/=) Nothing)
+                    , A.disabled (reportStatus /= Nothing)
                     ]
                     [ text "Generate Report" ]
                 ]
             ]
         , H.section []
             [ H.h3 [] [ text "API Preview" ]
-            , H.pre [ A.class "api-preview" ] [ text (formatEventsForApi model.timezone filteredEvents) ]
+            , apiPreviewContent
             ]
         ]
 
