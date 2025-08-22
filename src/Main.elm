@@ -7,6 +7,8 @@ import Browser
 import Browser.Dom as Dom
 import Browser.Events as Browser
 import Browser.Navigation as Nav
+import Chart as C
+import Chart.Attributes as CA
 import Date exposing (Date)
 import Dict exposing (Dict)
 import Html as H exposing (Html, text)
@@ -58,6 +60,26 @@ commas =
 round2 : Float -> Float
 round2 =
     (*) 100 >> floor >> toFloat >> flip (/) 100
+
+
+createHistogramData : List Event -> List { day : Float, count : Float }
+createHistogramData events =
+    let
+        weekInMs =
+            7 * 24 * 60 * 60 * 1000
+
+        groupEventsByWeek eventList =
+            eventList
+                |> List.map (\event -> floor (event.start / weekInMs) * weekInMs)
+                |> List.foldl (\week counts -> Dict.update week (Maybe.withDefault 0 >> (+) 1 >> Just) counts) Dict.empty
+                |> Dict.toList
+                |> List.map (\( week, count ) -> { day = toFloat week, count = toFloat count })
+    in
+    if List.isEmpty events then
+        []
+
+    else
+        groupEventsByWeek events
 
 
 formatEventDate : Time.Zone -> Float -> String
@@ -1300,11 +1322,40 @@ viewRepoSection model =
         ]
 
 
+viewHistogram : Time.Zone -> List Event -> Html Msg
+viewHistogram timezone events =
+    if List.isEmpty events then
+        H.div [] []
+
+    else
+        H.div [ A.class "histogram-container", S.heightPx 120, S.marginTopPx 20, S.marginBottomPx 10 ]
+            [ C.chart
+                [ CA.height 120
+                , CA.width 400
+                , CA.padding { top = 0, bottom = 0, left = 0, right = 0 }
+                ]
+                [ C.bars
+                    [ CA.x1 (Tuple.first >> toFloat)
+                    ]
+                    [ C.bar (Tuple.second >> logBase 10) [ CA.color "#0969da", CA.opacity 0.8 ]
+                    ]
+                  <|
+                    Dict.toList <|
+                        List.foldl (\event -> Dict.update (round event.start // (30 * 24 * 60 * 60 * 1000) * 30 * 24 * 60 * 60 * 1000) (Maybe.withDefault 1 >> (+) 1 >> Just)) Dict.empty <|
+                            events
+                , C.xLabels
+                    [ CA.noGrid
+                    , CA.amount 4
+                    , CA.times timezone
+                    ]
+                ]
+            ]
+
+
 viewFiltersSection : Model -> List Event -> Html Msg
 viewFiltersSection model filteredEvents =
     H.section []
-        [ -- TODO: Add histogram visualization here
-          H.div [ A.class "filter-count" ]
+        [ H.div [ A.class "filter-count" ]
             [ H.div [ A.class "filter-info" ]
                 [ text ("Showing " ++ String.fromInt (List.length filteredEvents) ++ " events") ]
             ]
@@ -1318,6 +1369,7 @@ viewFiltersSection model filteredEvents =
                 ]
                 []
             ]
+        , viewHistogram model.timezone filteredEvents
         , H.div [ A.class "form-row" ]
             [ H.input
                 [ A.type_ "date"
