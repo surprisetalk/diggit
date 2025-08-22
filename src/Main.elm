@@ -806,10 +806,8 @@ viewHeader =
         [ H.h1 [] [ H.a [ A.href "/" ] [ text "DIGGIT.DEV" ] ]
         , H.h2 [] [ text "for architecture archaeologists" ]
         , H.div [ A.class "header-links" ]
-            [ H.a [ A.href "https://taylor.town", A.target "_blank" ]
-                [ text "by taylor.town" ]
-            , H.a [ A.href "https://github.com/surprisetalk/diggit", A.target "_blank" ]
-                [ text "view on github" ]
+            [ H.a [ A.href "https://taylor.town", A.target "_blank" ] [ text "by taylor.town" ]
+            , H.a [ A.href "https://github.com/surprisetalk/diggit", A.target "_blank" ] [ text "view on github" ]
             ]
         ]
 
@@ -950,8 +948,7 @@ viewClaudeAside model filteredEvents =
             ]
         , H.section []
             [ H.h3 [] [ text "API Preview" ]
-            , H.pre [ A.class "api-preview" ]
-                [ text (formatEventsForApi model.timezone filteredEvents) ]
+            , H.pre [ A.class "api-preview" ] [ text (formatEventsForApi model.timezone filteredEvents) ]
             ]
         ]
 
@@ -990,10 +987,8 @@ viewMain model filteredEvents =
 viewEmptyState : Html Msg
 viewEmptyState =
     H.div [ A.class "empty-state" ]
-        [ H.h2 []
-            [ text "Welcome to Diggit" ]
-        , H.p []
-            [ text "Select a repository to start exploring its architecture" ]
+        [ H.h2 [] [ text "Welcome to Diggit" ]
+        , H.p [] [ text "Select a repository to start exploring its architecture" ]
         ]
 
 
@@ -1006,11 +1001,8 @@ viewReportSection repo model =
         Just report ->
             H.div [ A.class "report-section" ]
                 [ H.div [ A.class "report-summary" ]
-                    [ H.h3 []
-                        [ text "AI Summary" ]
-                    , H.p []
-                        [ text (iif (String.isEmpty report.summary) "Generating summary..." report.summary)
-                        ]
+                    [ H.h3 [] [ text "AI Summary" ]
+                    , H.p [] [ text (iif (String.isEmpty report.summary) "Generating summary..." report.summary) ]
                     ]
                 , iif (List.isEmpty report.suggestions) (text "") <| H.div [ A.class "suggestions" ] (List.map viewSuggestion report.suggestions)
                 ]
@@ -1110,8 +1102,7 @@ viewProgressBars model =
 viewProgressBar : ( String, Float ) -> Html Msg
 viewProgressBar ( message, progress ) =
     H.div [ A.class "progress-item" ]
-        [ H.div [ A.class "progress-label" ]
-            [ text message ]
+        [ H.div [ A.class "progress-label" ] [ text message ]
         , H.div [ A.class "progress-bar-container" ]
             [ H.div
                 [ A.class "progress-bar-fill"
@@ -1124,19 +1115,13 @@ viewProgressBar ( message, progress ) =
 
 viewErrors : Model -> Html Msg
 viewErrors model =
-    H.div [ A.class "error-container" ]
-        (List.indexedMap viewError model.errors)
+    H.div [ A.class "error-container" ] <|
+        List.indexedMap viewError model.errors
 
 
 viewError : Int -> Error -> Html Msg
 viewError index error =
     H.div [ A.class "error-item" ]
-        [ H.div
-            [ A.class "error-message" ]
-            [ text error.message ]
-        , H.button
-            [ A.onClick (RemoveError index)
-            , A.class "error-close"
-            ]
-            [ text "×" ]
+        [ H.div [ A.class "error-message" ] [ text error.message ]
+        , H.button [ A.onClick (RemoveError index), A.class "error-close" ] [ text "×" ]
         ]
