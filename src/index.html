@@ -101,35 +101,92 @@
               const directories = new Set();
 
               try {
-                const commitDiff = await git.walk({
-                  cache,
-                  fs: window.fs,
-                  dir,
-                  trees: [git.TREE({ ref: commit.oid })],
-                  map: async function (filepath, [tree]) {
-                    if (!tree) return null;
+                // Get parent commit for comparison
+                const parentOid =
+                  commit.commit.parent && commit.commit.parent[0];
+                if (parentOid) {
+                  const commitDiff = await git.walk({
+                    cache,
+                    fs: window.fs,
+                    dir,
+                    trees: [
+                      git.TREE({ ref: parentOid }),
+                      git.TREE({ ref: commit.oid }),
+                    ],
+                    map: async function (filepath, [A, B]) {
+                      // ignore directories
+                      if (filepath === ".") return;
+                      if (
+                        (await A?.type()) === "tree" ||
+                        (await B?.type()) === "tree"
+                      )
+                        return;
 
-                    // Track file extensions
-                    const ext = filepath.match(/\.([^.]+)$/);
-                    if (ext) {
-                      fileExtensions.add(`.${ext[1]}`);
-                    }
+                      // generate ids
+                      const Aoid = await A?.oid();
+                      const Boid = await B?.oid();
 
-                    // Track directories
-                    const dirPath = filepath.substring(
-                      0,
-                      filepath.lastIndexOf("/"),
-                    );
-                    if (dirPath) {
-                      directories.add(`/${dirPath}`);
-                    }
+                      // determine modification type
+                      let type = "equal";
+                      if (Aoid !== Boid) type = "modify";
+                      if (Aoid === undefined) type = "add";
+                      if (Boid === undefined) type = "remove";
 
-                    return filepath;
-                  },
-                });
-                changedFiles.push(
-                  ...(await Promise.all(commitDiff)).filter(Boolean),
-                );
+                      // Only track changed files
+                      if (type !== "equal") {
+                        // Track file extensions
+                        const ext = filepath.match(/\.([^.]+)$/);
+                        if (ext) fileExtensions.add(`.${ext[1]}`);
+
+                        // Track directories
+                        const dirPath = filepath.substring(
+                          0,
+                          filepath.lastIndexOf("/"),
+                        );
+                        if (dirPath) directories.add(`/${dirPath}`);
+
+                        return {
+                          path: `/${filepath}`,
+                          type: type,
+                        };
+                      }
+                      return null;
+                    },
+                  });
+                  changedFiles.push(
+                    ...(await Promise.all(commitDiff)).filter(Boolean),
+                  );
+                } else {
+                  // For initial commit, list all files as added
+                  const commitDiff = await git.walk({
+                    cache,
+                    fs: window.fs,
+                    dir,
+                    trees: [git.TREE({ ref: commit.oid })],
+                    map: async function (filepath, [tree]) {
+                      if (!tree || (await tree.type()) === "tree") return null;
+
+                      // Track file extensions
+                      const ext = filepath.match(/\.([^.]+)$/);
+                      if (ext) fileExtensions.add(`.${ext[1]}`);
+
+                      // Track directories
+                      const dirPath = filepath.substring(
+                        0,
+                        filepath.lastIndexOf("/"),
+                      );
+                      if (dirPath) directories.add(`/${dirPath}`);
+
+                      return {
+                        path: `/${filepath}`,
+                        type: "add",
+                      };
+                    },
+                  });
+                  changedFiles.push(
+                    ...(await Promise.all(commitDiff)).filter(Boolean),
+                  );
+                }
               } catch (error) {
                 console.warn(
                   `Could not get files for commit ${commit.oid}:`,
@@ -148,9 +205,6 @@
               const month = commitDate
                 .toLocaleString("en-US", { month: "short" })
                 .toLowerCase();
-              const dayOfWeek = commitDate
-                .toLocaleString("en-US", { weekday: "short" })
-                .toLowerCase();
 
               // Check if merge commit (has more than one parent)
               const isMerge =
@@ -167,11 +221,10 @@
                   "commit",
                   `@${commit.commit.author.name}`,
                   `${year}`,
-                  `${month}`,
-                  `${dayOfWeek}`,
+                  // `${year}-${month}`,
                   ...(isMerge ? ["merge"] : []),
-                  ...Array.from(fileExtensions).slice(0, 5), // Limit to 5 most common extensions
-                  ...Array.from(directories).slice(0, 3), // Limit to 3 directories
+                  ...Array.from(fileExtensions),
+                  ...Array.from(directories).slice(0, 100), // Limit to 100 directories
                   ...hashtags,
                 ],
                 summary: commit.commit.message,

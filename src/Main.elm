@@ -425,7 +425,7 @@ init flags url nav =
             { nav = nav
             , errors = []
             , progress = Dict.empty
-            , repos = [ "elm/compiler", "sindresorhus/awesome", "automerge/automerge", "PRQL/prql", "charmbracelet/lipgloss", "munificent/vigil" ]
+            , repos = [ "elm/compiler", "sindresorhus/awesome", "automerge/automerge", "PRQL/prql", "charmbracelet/lipgloss", "munificent/vigil", "surprisetalk/blogs.hn" ]
             , hover = Set.empty
             , form = filters
             , route = filters
@@ -900,7 +900,7 @@ viewFiltersSection model filteredEvents =
             ]
         , H.div [ A.class "form-row" ]
             [ H.input
-                [ A.type_ "datetime-local"
+                [ A.type_ "date"
                 , A.placeholder "Start date"
                 , A.value model.form.start
                 , A.onInput StartChanged
@@ -908,7 +908,7 @@ viewFiltersSection model filteredEvents =
                 ]
                 []
             , H.input
-                [ A.type_ "datetime-local"
+                [ A.type_ "date"
                 , A.placeholder "End date"
                 , A.value model.form.end
                 , A.onInput EndChanged
@@ -1027,7 +1027,7 @@ viewMain model filteredEvents =
                 viewEmptyState
 
             Just repo ->
-                H.div []
+                H.div [ S.displayFlex, S.flexDirectionColumn, S.width "100%" ]
                     [ viewReportSection repo model
                     , viewEventsSection filteredEvents model
                     , viewVisualization filteredEvents

@@ -8,10 +8,16 @@ body {
   padding: 0;
 }
 
+body * {
+  box-sizing: border-box;
+}
+
 /* Layout */
 .app-layout {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto auto;
   min-height: 100vh;
+  width: 100vw;
 }
 
 .flex {
@@ -56,20 +62,19 @@ body {
 
 /* Sidebar */
 .sidebar {
-  width: 320px;
   padding: 20px;
   border-right: 1px solid #e0e0e0;
   overflow-y: auto;
   max-height: 100vh;
+  max-width: 28rem;
 }
 
 /* Main content */
 .main-content {
-  flex: 1;
   padding: 20px;
   overflow-y: auto;
   max-height: 100vh;
-  position: relative;
+  width: 100%;
 }
 
 /* Header */
@@ -205,6 +210,9 @@ body {
 /* Events */
 .events-section {
   margin-bottom: 30px;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
 }
 
 .events-section h3 {
@@ -213,8 +221,8 @@ body {
 }
 
 .events-list {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr));
   gap: 10px;
 }
 
@@ -255,6 +263,7 @@ body {
 
 .event-tags {
   display: flex;
+  flex-wrap: wrap;
   gap: 5px;
 }
 
@@ -346,7 +355,6 @@ body {
 }
 
 .claude-section .password-input {
-  width: 100%;
   padding: 8px;
   border: 1px solid #ccc;
   border-radius: 4px;
