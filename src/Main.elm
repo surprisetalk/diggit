@@ -669,7 +669,7 @@ init flags url nav =
             { nav = nav
             , errors = []
             , progress = Dict.empty
-            , repos = [ "surprisetalk/diggit", "sindresorhus/awesome", "automerge/automerge", "PRQL/prql", "charmbracelet/lipgloss", "munificent/vigil", "surprisetalk/blogs.hn" ]
+            , repos = [ "surprisetalk/diggit", "sindresorhus/awesome", "automerge/automerge", "PRQL/prql", "charmbracelet/lipgloss", "munificent/vigil", "surprisetalk/blogs.hn", "tekknolagi/scrapscript" ]
             , hover = Set.empty
             , form = filters
             , route = filters
@@ -1198,7 +1198,7 @@ fetchGithubIssues page maybeSince repoUrl =
                             ""
 
                 baseUrl =
-                    "https://api.github.com/repos/" ++ owner ++ "/" ++ repoName ++ "/issues?state=all&per_page=100&page=" ++ String.fromInt page
+                    "https://api.github.com/repos/" ++ owner ++ "/" ++ repoName ++ "/issues?state=all&per_page=100&direction=asc&page=" ++ String.fromInt page
 
                 urlWithSince =
                     baseUrl ++ sinceParam
@@ -1502,7 +1502,8 @@ viewApiCheckbox field label checked =
 
 summarizerPrompt : String
 summarizerPrompt =
-    "Please provide a comprehensive summary of this repository's development activity in markdown format with links where possible. Include key insights about development patterns, major contributors, and notable changes. Use markdown features like links to commits/issues/PRs, headings, lists, and code blocks to make the output well-structured and navigable."
+    -- TODO: Add repo name, e.g. github.com/owner/repo
+    "Please provide a comprehensive summary of this repository's development activity in markdown format with links where possible.\nInclude key insights about development patterns, major contributors, and notable changes.\nUse markdown features like links to commits/issues/PRs, headings, lists, and code blocks to make the output well-structured and navigable."
 
 
 viewClaudeAside : Model -> List Event -> Html Msg
