@@ -291,7 +291,18 @@
               tags: {},
               branches: branchData,
               files,
-              github: { issues: {}, events: {}, users: {} },
+              github: { 
+                issues: {}, 
+                events: {}, 
+                users: {},
+                cursors: {
+                  eventsCursor: null,
+                  issuesCursor: null,
+                  lastFetch: null,
+                  eventsPage: 1,
+                  issuesPage: 1
+                }
+              },
               report: null,
             });
           } catch (error) {

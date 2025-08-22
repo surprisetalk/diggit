@@ -377,11 +377,11 @@ githubDecoder =
 githubUserDecoder : D.Decoder GithubUser
 githubUserDecoder =
     D.map5 GithubUser
-        (D.field "id" D.string)
+        (D.field "id" (D.int |> D.map String.fromInt))
         (D.field "login" D.string)
         (D.maybe (D.field "name" D.string))
-        (D.field "avatarUrl" D.string)
-        (D.field "htmlUrl" D.string)
+        (D.field "avatar_url" D.string)
+        (D.field "html_url" D.string)
 
 
 reportDecoder : D.Decoder Report
@@ -405,6 +405,151 @@ claudeResponseDecoder =
         (D.index 0
             (D.field "text" D.string)
         )
+
+
+githubEventsDecoder : D.Decoder (List Event)
+githubEventsDecoder =
+    D.list
+        (D.map8
+            (\id url createdAt actor eventType payload repo commits ->
+                { id = id
+                , url = url
+                , start = createdAt
+                , end = Nothing
+                , insertions = 0
+                , deletions = 0
+                , tags = Set.fromList [ "github", eventType, "@" ++ actor ]
+                , summary = formatGithubEventSummary eventType payload
+                }
+            )
+            (D.field "id" D.string)
+            (D.oneOf [ D.field "url" D.string, D.succeed "" ])
+            (D.field "created_at" (D.string |> D.map iso8601ToTime))
+            (D.field "actor" (D.field "login" D.string))
+            (D.field "type" D.string)
+            (D.field "payload" D.value)
+            (D.maybe (D.field "repo" (D.field "name" D.string)))
+            (D.maybe (D.field "payload" (D.field "commits" (D.list (D.field "sha" D.string)))))
+        )
+
+
+githubIssuesDecoder : D.Decoder (Dict Int Event)
+githubIssuesDecoder =
+    D.list
+        (D.map8
+            (\number title url createdAt updatedAt closedAt user isPr ->
+                ( number
+                , { id = "issue-" ++ String.fromInt number
+                  , url = url
+                  , start = createdAt
+                  , end = closedAt
+                  , insertions = 0
+                  , deletions = 0
+                  , tags =
+                        Set.fromList
+                            ([ "github"
+                             , if isPr then
+                                "pr"
+
+                               else
+                                "issue"
+                             , "@" ++ user
+                             ]
+                                ++ (if closedAt /= Nothing then
+                                        [ "closed" ]
+
+                                    else
+                                        [ "open" ]
+                                   )
+                            )
+                  , summary = title
+                  }
+                )
+            )
+            (D.field "number" D.int)
+            (D.field "title" D.string)
+            (D.field "html_url" D.string)
+            (D.field "created_at" (D.string |> D.map iso8601ToTime))
+            (D.field "updated_at" (D.string |> D.map iso8601ToTime))
+            (D.maybe (D.field "closed_at" (D.string |> D.map iso8601ToTime)))
+            (D.field "user" (D.field "login" D.string))
+            (D.maybe (D.field "pull_request" D.value) |> D.map ((/=) Nothing))
+        )
+        |> D.map Dict.fromList
+
+
+iso8601ToTime : String -> Time
+iso8601ToTime isoString =
+    case String.split "T" isoString of
+        [ datePart, timePart ] ->
+            case ( String.split "-" datePart, String.split ":" (String.replace "Z" "" timePart) ) of
+                ( [ year, month, day ], [ hour, minute, second ] ) ->
+                    let
+                        yearInt =
+                            String.toInt year |> Maybe.withDefault 1970
+
+                        monthInt =
+                            String.toInt month |> Maybe.withDefault 1
+
+                        dayInt =
+                            String.toInt day |> Maybe.withDefault 1
+
+                        hourInt =
+                            String.toInt hour |> Maybe.withDefault 0
+
+                        minuteInt =
+                            String.toInt minute |> Maybe.withDefault 0
+
+                        secondFloat =
+                            String.toFloat (String.split "." second |> List.head |> Maybe.withDefault "0") |> Maybe.withDefault 0
+
+                        days =
+                            (yearInt - 1970) * 365 + (monthInt - 1) * 30 + (dayInt - 1)
+
+                        hours =
+                            days * 24 + hourInt
+
+                        minutes =
+                            hours * 60 + minuteInt
+
+                        seconds =
+                            toFloat minutes * 60 + secondFloat
+                    in
+                    seconds * 1000
+
+                _ ->
+                    0
+
+        _ ->
+            0
+
+
+formatGithubEventSummary : String -> D.Value -> String
+formatGithubEventSummary eventType payload =
+    case eventType of
+        "PushEvent" ->
+            "Pushed commits"
+
+        "CreateEvent" ->
+            "Created branch or tag"
+
+        "DeleteEvent" ->
+            "Deleted branch or tag"
+
+        "IssuesEvent" ->
+            "Issue activity"
+
+        "PullRequestEvent" ->
+            "Pull request activity"
+
+        "WatchEvent" ->
+            "Starred repository"
+
+        "ForkEvent" ->
+            "Forked repository"
+
+        _ ->
+            eventType
 
 
 
@@ -509,11 +654,9 @@ type Msg
     | ClaudeResponseReceived (Result Http.Error String)
     | Hovered (Set Tag)
     | RepoLoaded D.Value
-    | GithubEventsFetched (Result Http.Error (List Event))
+    | GithubEventsFetched Int (Result Http.Error (List Event))
+    | GithubIssuesFetched Int (Result Http.Error (Dict Int Event))
     | GithubUsersFetched (Result Http.Error (List GithubUser))
-    | GithubIssuesFetched (Result Http.Error (Dict Int Event))
-    | JobTick Time
-    | JobCompleted Int (Result Http.Error ClaudeResponse)
     | AddError String
     | PageErrored String
     | ProgressReported { message : String, progress : Float }
@@ -664,9 +807,8 @@ update msg ({ form, claude } as model) =
                 Ok repo ->
                     ( { model | repo = Just repo }
                     , Cmd.batch
-                        [-- TODO: fetchGithubEvents repo
-                         -- TODO: fetchGithubUsers repo
-                         -- TODO: fetchGithubIssues repo
+                        [ fetchGithubEvents 1 repo
+                        , fetchGithubIssues 1 repo
                         ]
                     )
 
@@ -675,34 +817,53 @@ update msg ({ form, claude } as model) =
                     , Cmd.none
                     )
 
-        GithubEventsFetched (Ok events) ->
-            -- TODO: Update repo.github.events
-            ( model, Cmd.none )
+        GithubEventsFetched page (Ok events) ->
+            case model.repo of
+                Just repo ->
+                    ( { model | repo = Just { repo | github = { issues = repo.github.issues, events = Dict.union (events |> List.map (\event -> ( event.id, event )) |> Dict.fromList) repo.github.events, users = repo.github.users } } }
+                    , Cmd.batch
+                        [ collectGithubUsers events |> fetchGithubUsers
+                        , if List.length events > 0 then
+                            fetchGithubEvents (page + 1) { repo | github = { issues = repo.github.issues, events = Dict.union (events |> List.map (\event -> ( event.id, event )) |> Dict.fromList) repo.github.events, users = repo.github.users } }
 
-        GithubEventsFetched (Err err) ->
+                          else
+                            Cmd.none
+                        ]
+                    )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        GithubEventsFetched _ (Err err) ->
             ( addError ("Failed to fetch GitHub events: " ++ httpErrorToString err) model, Cmd.none )
 
+        GithubIssuesFetched page (Ok issues) ->
+            case model.repo of
+                Just repo ->
+                    ( { model | repo = Just { repo | github = { issues = Dict.union issues repo.github.issues, events = repo.github.events, users = repo.github.users } } }
+                    , if Dict.size issues > 0 then
+                        fetchGithubIssues (page + 1) { repo | github = { issues = Dict.union issues repo.github.issues, events = repo.github.events, users = repo.github.users } }
+
+                      else
+                        Cmd.none
+                    )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        GithubIssuesFetched _ (Err err) ->
+            ( addError ("Failed to fetch GitHub issues: " ++ httpErrorToString err) model, Cmd.none )
+
         GithubUsersFetched (Ok users) ->
-            -- TODO: Update repo.github.users
-            ( model, Cmd.none )
+            case model.repo of
+                Just repo ->
+                    ( { model | repo = Just { repo | github = { issues = repo.github.issues, events = repo.github.events, users = Dict.union (users |> List.map (\user -> ( user.id, user )) |> Dict.fromList) repo.github.users } } }, Cmd.none )
+
+                Nothing ->
+                    ( model, Cmd.none )
 
         GithubUsersFetched (Err err) ->
             ( addError ("Failed to fetch GitHub users: " ++ httpErrorToString err) model, Cmd.none )
-
-        GithubIssuesFetched (Ok issues) ->
-            -- TODO: Update repo.github.issues
-            ( model, Cmd.none )
-
-        GithubIssuesFetched (Err err) ->
-            ( addError ("Failed to fetch GitHub issues: " ++ httpErrorToString err) model, Cmd.none )
-
-        JobTick time ->
-            -- TODO: Start next job if none are processing
-            ( model, Cmd.none )
-
-        JobCompleted index result ->
-            -- TODO: Update job at index with result
-            ( model, Cmd.none )
 
         AddError message ->
             ( addError message model, Cmd.none )
@@ -788,6 +949,101 @@ mapClaudeModel model =
 
         _ ->
             "claude-3-5-sonnet-20241022"
+
+
+extractRepoFromUrl : String -> Maybe ( String, String )
+extractRepoFromUrl url =
+    url
+        |> String.replace "https://github.com/" ""
+        |> String.split "/"
+        |> (\parts ->
+                case parts of
+                    [ owner, repo ] ->
+                        Just ( owner, repo )
+
+                    _ ->
+                        Nothing
+           )
+
+
+fetchGithubEvents : Int -> Repo -> Cmd Msg
+fetchGithubEvents page repo =
+    case extractRepoFromUrl repo.url |> Maybe.map (\( owner, repoName ) -> ( owner, repoName )) of
+        Just ( owner, repoName ) ->
+            Http.request
+                { method = "GET"
+                , headers =
+                    [ Http.header "Accept" "application/vnd.github.v3+json"
+                    , Http.header "User-Agent" "diggit-app"
+                    ]
+                , url =
+                    "https://api.github.com/repos/" ++ owner ++ "/" ++ repoName ++ "/events?per_page=100&page=" ++ String.fromInt page
+                , body = Http.emptyBody
+                , expect = Http.expectJson (GithubEventsFetched page) githubEventsDecoder
+                , timeout = Just 30000
+                , tracker = Nothing
+                }
+
+        Nothing ->
+            Cmd.none
+
+
+fetchGithubIssues : Int -> Repo -> Cmd Msg
+fetchGithubIssues page repo =
+    case extractRepoFromUrl repo.url |> Maybe.map (\( owner, repoName ) -> ( owner, repoName )) of
+        Just ( owner, repoName ) ->
+            Http.request
+                { method = "GET"
+                , headers =
+                    [ Http.header "Accept" "application/vnd.github.v3+json"
+                    , Http.header "User-Agent" "diggit-app"
+                    ]
+                , url = "https://api.github.com/repos/" ++ owner ++ "/" ++ repoName ++ "/issues?state=all&per_page=100&page=" ++ String.fromInt page
+                , body = Http.emptyBody
+                , expect = Http.expectJson (GithubIssuesFetched page) githubIssuesDecoder
+                , timeout = Just 30000
+                , tracker = Nothing
+                }
+
+        Nothing ->
+            Cmd.none
+
+
+fetchGithubUsers : List String -> Cmd Msg
+fetchGithubUsers userLogins =
+    case userLogins of
+        [] ->
+            Cmd.none
+
+        login :: _ ->
+            Http.request
+                { method = "GET"
+                , headers =
+                    [ Http.header "Accept" "application/vnd.github.v3+json"
+                    , Http.header "User-Agent" "diggit-app"
+                    ]
+                , url =
+                    "https://api.github.com/users/" ++ login
+                , body = Http.emptyBody
+                , expect = Http.expectJson GithubUsersFetched (githubUserDecoder |> D.map List.singleton)
+                , timeout = Just 30000
+                , tracker = Nothing
+                }
+
+
+collectGithubUsers : List Event -> List String
+collectGithubUsers events =
+    events
+        |> List.concatMap (.tags >> Set.toList)
+        |> List.filterMap
+            (\tag ->
+                if String.startsWith "@" tag then
+                    Just (String.dropLeft 1 tag)
+
+                else
+                    Nothing
+            )
+        |> List.take 10
 
 
 
