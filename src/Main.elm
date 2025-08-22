@@ -152,6 +152,7 @@ type alias Filters =
     , start : String
     , end : String
     , tags : Set Tag
+    , query : String
     }
 
 
@@ -454,13 +455,13 @@ init flags url nav =
 
 defaultFilters : Filters
 defaultFilters =
-    { repo = "", start = "", end = "", tags = Set.empty }
+    { repo = "", start = "", end = "", tags = Set.empty, query = "" }
 
 
 router : Url -> Filters
 router =
     let
-        -- e.g. /repo/ziglang/zig?start=20240401&end=20250401&tags=\>main,@sally#202404
+        -- e.g. /repo/ziglang/zig?start=20240401&end=20250401&tags=\>main,@sally&q=TODO#202404
         routeParser : UrlP.Parser (Filters -> a) a
         routeParser =
             (UrlP.top
@@ -469,9 +470,10 @@ router =
                 <?> UrlQ.string "start"
                 <?> UrlQ.string "end"
                 <?> UrlQ.string "tags"
+                <?> UrlQ.string "q"
             )
                 |> UrlP.map
-                    (\owner repo maybeStart maybeEnd maybeTags ->
+                    (\owner repo maybeStart maybeEnd maybeTags maybeQuery ->
                         { repo = owner ++ "/" ++ repo
                         , start = Maybe.withDefault "" maybeStart
                         , end = Maybe.withDefault "" maybeEnd
@@ -481,6 +483,7 @@ router =
                                 |> String.split ","
                                 |> List.filter (not << String.isEmpty)
                                 |> Set.fromList
+                        , query = Maybe.withDefault "" maybeQuery
                         }
                     )
     in
@@ -500,6 +503,7 @@ type Msg
     | RepoUrlSubmitted
     | StartChanged String
     | EndChanged String
+    | QueryChanged String
     | TagAdded Tag
     | TagExcluded Tag
     | TagRemoved Tag
@@ -571,6 +575,11 @@ update msg ({ form, claude } as model) =
         EndChanged t ->
             ( { model | form = { form | end = t } }
             , Nav.pushUrl model.nav (buildUrl model.route)
+            )
+
+        QueryChanged q ->
+            ( { model | form = { form | query = q } }
+            , Nav.pushUrl model.nav (buildUrl { form | query = q })
             )
 
         TagAdded tag ->
@@ -700,7 +709,7 @@ buildUrl filters =
             "/" ++ iif (String.isEmpty filters.repo) "" filters.repo
 
         params =
-            [ ( "start", filters.start ), ( "end", filters.end ), ( "tags", String.join "," (Set.toList filters.tags) ) ]
+            [ ( "start", filters.start ), ( "end", filters.end ), ( "tags", String.join "," (Set.toList filters.tags) ), ( "q", filters.query ) ]
                 |> List.filter (\( _, v ) -> not (String.isEmpty v || (v == "")))
                 |> List.map (\( k, v ) -> k ++ "=" ++ v)
                 |> String.join "&"
@@ -740,8 +749,12 @@ view model =
                             tagsOk =
                                 Set.isEmpty model.route.tags
                                     || Set.isEmpty (Set.diff model.route.tags event.tags)
+
+                            queryOk =
+                                String.isEmpty model.route.query
+                                    || String.contains (String.toLower model.route.query) (String.toLower event.summary)
                         in
-                        startOk && endOk && tagsOk
+                        startOk && endOk && tagsOk && queryOk
                     )
 
         allTags =
@@ -779,10 +792,7 @@ view model =
 
 viewAside : Model -> List Event -> List Tag -> List ( Tag, Int ) -> Html Msg
 viewAside model filteredEvents allTags tagFrequencies =
-    H.aside
-        [ A.class "sidebar"
-        , S.borderRight "1px solid #30363d"
-        ]
+    H.aside [ A.class "sidebar", S.borderRight "1px solid #30363d" ]
         [ viewHeader
         , viewRepoSection model
         , viewFiltersSection model filteredEvents
@@ -793,24 +803,12 @@ viewAside model filteredEvents allTags tagFrequencies =
 viewHeader : Html Msg
 viewHeader =
     H.header [ A.class "header" ]
-        [ H.h1 []
-            [ H.a
-                [ A.href "/"
-                ]
-                [ text "DIGGIT.DEV" ]
-            ]
-        , H.h2 []
-            [ text "for architecture archaeologists" ]
+        [ H.h1 [] [ H.a [ A.href "/" ] [ text "DIGGIT.DEV" ] ]
+        , H.h2 [] [ text "for architecture archaeologists" ]
         , H.div [ A.class "header-links" ]
-            [ H.a
-                [ A.href "https://taylor.town"
-                , A.target "_blank"
-                ]
+            [ H.a [ A.href "https://taylor.town", A.target "_blank" ]
                 [ text "by taylor.town" ]
-            , H.a
-                [ A.href "https://github.com/surprisetalk/diggit"
-                , A.target "_blank"
-                ]
+            , H.a [ A.href "https://github.com/surprisetalk/diggit", A.target "_blank" ]
                 [ text "view on github" ]
             ]
         ]
@@ -850,6 +848,16 @@ viewFiltersSection model filteredEvents =
           H.div [ A.class "filter-count" ]
             [ H.div [ A.class "filter-info" ]
                 [ text ("Showing " ++ String.fromInt (List.length filteredEvents) ++ " events") ]
+            ]
+        , H.div [ A.class "form-row" ]
+            [ H.input
+                [ A.type_ "text"
+                , A.placeholder "Search events..."
+                , A.value model.form.query
+                , A.onInput QueryChanged
+                , A.class "input"
+                ]
+                []
             ]
         , H.div [ A.class "form-row" ]
             [ H.input
@@ -905,19 +913,13 @@ viewTagsSection model tagFrequencies =
 
 tagButton : String -> Msg -> Html Msg
 tagButton label msg =
-    H.button
-        [ A.onClick msg
-        , A.class "small-btn"
-        ]
+    H.button [ A.onClick msg, A.class "small-btn" ]
         [ text label ]
 
 
 viewClaudeAside : Model -> List Event -> Html Msg
 viewClaudeAside model filteredEvents =
-    H.aside
-        [ A.class "sidebar"
-        , S.borderLeft "1px solid #30363d"
-        ]
+    H.aside [ A.class "sidebar", S.borderLeft "1px solid #30363d" ]
         [ H.section []
             [ H.h3 [] [ text "Claude Settings" ]
             , H.div [ A.class "claude-form" ]
@@ -957,26 +959,20 @@ viewClaudeAside model filteredEvents =
 formatEventsForApi : Time.Zone -> List Event -> String
 formatEventsForApi timezone events =
     events
-        |> List.take 50
         |> List.map
             (\event ->
-                let
-                    eventDate =
-                        formatEventDate timezone event.start
-
-                    tags =
-                        Set.toList event.tags |> String.join " "
-                in
-                eventDate ++ " " ++ tags ++ " " ++ event.summary
+                String.join " "
+                    [ formatEventDate timezone event.start
+                    , Set.toList event.tags |> String.join " "
+                    , String.replace "\n" " " event.summary
+                    ]
             )
         |> String.join "\n"
 
 
 viewMain : Model -> List Event -> Html Msg
 viewMain model filteredEvents =
-    H.main_
-        [ A.class "main-content"
-        ]
+    H.main_ [ A.class "main-content" ]
         [ viewProgressBars model
         , case model.repo of
             Nothing ->
@@ -993,9 +989,7 @@ viewMain model filteredEvents =
 
 viewEmptyState : Html Msg
 viewEmptyState =
-    H.div
-        [ A.class "empty-state"
-        ]
+    H.div [ A.class "empty-state" ]
         [ H.h2 []
             [ text "Welcome to Diggit" ]
         , H.p []
@@ -1024,10 +1018,7 @@ viewReportSection repo model =
 
 viewSuggestion : Suggestion -> Html Msg
 viewSuggestion suggestion =
-    H.a
-        [ A.href "#"
-        , A.class "suggestion"
-        ]
+    H.a [ A.href "#", A.class "suggestion" ]
         [ text suggestion.text ]
 
 
@@ -1061,11 +1052,7 @@ viewEvent model event =
         , A.onMouseLeave (Hovered Set.empty)
         ]
         [ H.div [ A.class "event-header" ]
-            [ H.a
-                [ A.href event.url
-                , A.target "_blank"
-                , A.class "event-link"
-                ]
+            [ H.a [ A.href event.url, A.target "_blank", A.class "event-link" ]
                 [ text (String.left 60 event.summary) ]
             ]
         , H.div [ A.class "event-meta" ]
@@ -1112,8 +1099,7 @@ viewVisualization events =
 
 viewProgressBars : Model -> Html Msg
 viewProgressBars model =
-    H.div
-        [ A.class "progress-container" ]
+    H.div [ A.class "progress-container" ]
         (model.progress
             |> Dict.filter (\_ v -> v < 1)
             |> Dict.toList
@@ -1123,13 +1109,10 @@ viewProgressBars model =
 
 viewProgressBar : ( String, Float ) -> Html Msg
 viewProgressBar ( message, progress ) =
-    H.div
-        [ A.class "progress-item" ]
-        [ H.div
-            [ A.class "progress-label" ]
+    H.div [ A.class "progress-item" ]
+        [ H.div [ A.class "progress-label" ]
             [ text message ]
-        , H.div
-            [ A.class "progress-bar-container" ]
+        , H.div [ A.class "progress-bar-container" ]
             [ H.div
                 [ A.class "progress-bar-fill"
                 , S.width (String.fromFloat (progress * 100) ++ "%")
@@ -1141,15 +1124,13 @@ viewProgressBar ( message, progress ) =
 
 viewErrors : Model -> Html Msg
 viewErrors model =
-    H.div
-        [ A.class "error-container" ]
+    H.div [ A.class "error-container" ]
         (List.indexedMap viewError model.errors)
 
 
 viewError : Int -> Error -> Html Msg
 viewError index error =
-    H.div
-        [ A.class "error-item" ]
+    H.div [ A.class "error-item" ]
         [ H.div
             [ A.class "error-message" ]
             [ text error.message ]
