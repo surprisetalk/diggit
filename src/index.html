@@ -26,72 +26,59 @@
           },
         });
 
-        app.ports.requestRepo.subscribe(async (repoUrl) => {
-          try {
-            console.log(`Cloning repository: ${repoUrl}`);
+        let cache = {};
+        let loadInterval;
 
+        app.ports.requestRepo.subscribe(async (repoUrl) => {
+          if (!repoUrl) return;
+          const loading = (progress) =>
+            // TODO: Is this working?
+            app.ports.progressReported.send({
+              message: `Cloning ${repoUrl}...`,
+              progress,
+            });
+
+          try {
             const dir = `/repos/${repoUrl}`;
             const url = `https://github.com/${repoUrl}`;
 
-            let cache = {};
+            loading(0.1);
 
-            // Report initial progress
-            if (app.ports.progressReported) {
-              app.ports.progressReported.send({
-                message: `Cloning ${repoUrl}...`,
-                progress: 0.0,
-              });
-            }
+            let n = 0;
+            loadInterval = setInterval(
+              () => loading(Math.min(0.7, (0.1 + ++n * 0.0005) / 0.7)),
+              100,
+            );
 
             await git.clone({
               cache,
               fs: window.fs,
-              http,
+              http, // TODO: Track progress?
               dir,
               corsProxy: "https://cors.isomorphic-git.org",
               url,
-              depth: 1000,
-              batchSize: 100,
-              singleBranch: true,
-              noCheckout: true,
-              onProgress: (event) => {
-                console.log(event);
-                if (
-                  app.ports.progressReported &&
-                  event.phase &&
-                  event.loaded &&
-                  event.total
-                ) {
-                  const progress = event.loaded / event.total;
-                  app.ports.progressReported.send({
-                    message: `${event.phase}: ${repoUrl}`,
-                    progress: Math.min(progress, 0.99), // Keep under 1.0 until fully complete
-                  });
-                }
-              },
-              onMessage: (message) => {
-                console.log(message);
-                if (app.ports.progressReported) {
-                  app.ports.progressReported.send({
-                    message: `${repoUrl}: ${message}`,
-                    progress: 0.5,
-                  });
-                }
-              },
+              since: new Date(0),
+              singleBranch: false,
+              noCheckout: false,
+              onMessage: console.log,
+              onProgress: (event) =>
+                event.phase &&
+                event.loaded &&
+                event.total &&
+                app.ports.progressReported.send({
+                  message: `${repoUrl}: ${event.phase}`,
+                  progress: event.loaded / event.total,
+                }),
             });
 
-            // Report fetching commits
-            if (app.ports.progressReported) {
-              app.ports.progressReported.send({
-                message: `Fetching commits for ${repoUrl}...`,
-                progress: 0.7,
-              });
-            }
+            clearInterval(loadInterval);
+
+            loading(0.7);
 
             const commits = await git.log({
+              cache,
               fs: window.fs,
               dir,
-              depth: 1000,
             });
 
             const authors = {};
@@ -121,7 +108,10 @@
               };
             }
 
+            loading(0.8);
+
             const branches = await git.listBranches({
+              cache,
               fs: window.fs,
               dir,
             });
@@ -129,11 +119,11 @@
             const branchData = {};
             for (const branch of branches) {
               const branchCommit = await git.resolveRef({
+                cache,
                 fs: window.fs,
                 dir,
                 ref: branch,
               });
-
               branchData[branch] = {
                 id: branchCommit,
                 url: `${url}/tree/${branch}`,
@@ -146,9 +136,31 @@
               };
             }
 
+            loading(0.9);
+
+            // TODO: Inline this.
+            async function getFileList(dir, path = "") {
+              const files = [];
+              try {
+                const entries = await window.pfs.readdir(dir + path);
+                for (const entry of entries) {
+                  const fullPath = path + "/" + entry;
+                  const stat = await window.pfs.stat(dir + fullPath);
+                  if (stat.isDirectory()) {
+                    const subFiles = await getFileList(dir, fullPath);
+                    files.push(...subFiles);
+                  } else {
+                    files.push(fullPath.substring(1));
+                  }
+                }
+              } catch (error) {
+                console.warn(`Could not read directory ${dir + path}:`, error);
+              }
+              return files;
+            }
             const files = await getFileList(dir);
 
-            const repoData = {
+            app.ports.repoLoaded.send({
               url: url,
               commits: commitData,
               authors: authors,
@@ -161,63 +173,20 @@
                 users: {},
               },
               report: null,
-            };
-
-            // Report completion
-            if (app.ports.progressReported) {
-              app.ports.progressReported.send({
-                message: `Completed loading ${repoUrl}`,
-                progress: 1.0,
-              });
-            }
-
-            app.ports.repoLoaded.send(repoData);
+            });
           } catch (error) {
             console.error("Failed to clone repository:", error);
-
-            // Send error through pageErrored port
-            if (app.ports.pageErrored) {
-              app.ports.pageErrored.send(
-                error.message || "Failed to clone repository",
-              );
-            }
-
-            // Clear any progress
-            if (app.ports.progressReported) {
-              app.ports.progressReported.send({
-                message: `Cloning ${repoUrl}...`,
-                progress: 1.0, // This will remove the progress bar
-              });
-            }
+            app.ports.pageErrored.send(
+              error?.message ?? "Failed to clone repository",
+            );
+          } finally {
+            clearInterval(loadInterval);
+            loading(1.0);
           }
         });
-
-        async function getFileList(dir, path = "") {
-          const files = [];
-          try {
-            const entries = await window.pfs.readdir(dir + path);
-            for (const entry of entries) {
-              const fullPath = path + "/" + entry;
-              const stat = await window.pfs.stat(dir + fullPath);
-              if (stat.isDirectory()) {
-                const subFiles = await getFileList(dir, fullPath);
-                files.push(...subFiles);
-              } else {
-                files.push(fullPath.substring(1));
-              }
-            }
-          } catch (error) {
-            console.warn(`Could not read directory ${dir + path}:`, error);
-          }
-          return files;
-        }
       } catch (error) {
         console.error(error);
-        if (app && app.ports && app.ports.pageErrored) {
-          app.ports.pageErrored.send(error?.message ?? "Something went wrong.");
-        } else {
-          document.body.innerHTML = `<div style="padding: 20px; color: red;">Error: ${error?.message ?? "Something went wrong."}</div>`;
-        }
+        app.ports.pageErrored.send(error?.message ?? "Something went wrong.");
       }
     </script>
   </body>

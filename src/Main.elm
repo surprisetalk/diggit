@@ -84,7 +84,7 @@ port requestRepo : String -> Cmd msg
 port repoLoaded : (D.Value -> msg) -> Sub msg
 
 
-port pageErrored : String -> Cmd msg
+port pageErrored : (String -> msg) -> Sub msg
 
 
 port progressReported : ({ message : String, progress : Float } -> msg) -> Sub msg
@@ -428,7 +428,7 @@ init flags url nav =
             { nav = nav
             , errors = []
             , progress = Dict.empty
-            , repos = [ "elm/compiler", "ziglang/zig", "roc-lang/roc" ]
+            , repos = [ "elm/compiler", "sindresorhus/awesome", "automerge/automerge", "PRQL/prql", "charmbracelet/lipgloss", "munificent/vigil" ]
             , hover = Set.empty
             , form = filters
             , route = filters
@@ -438,7 +438,7 @@ init flags url nav =
             }
     in
     ( model
-    , iif (String.isEmpty filters.repo) Cmd.none (requestRepo filters.repo)
+    , requestRepo filters.repo
     )
 
 
@@ -517,6 +517,7 @@ subs : Model -> Sub Msg
 subs model =
     Sub.batch
         [ repoLoaded RepoLoaded
+        , pageErrored PageErrored
         , progressReported ProgressReported
 
         -- TODO: Time.every (1000) JobTick
@@ -553,7 +554,7 @@ update msg ({ form, claude } as model) =
 
         RepoUrlSubmitted ->
             ( { model | form = { defaultFilters | repo = model.form.repo } }
-            , Nav.pushUrl model.nav model.form.repo
+            , Nav.pushUrl model.nav ("/" ++ model.form.repo)
             )
 
         StartChanged t ->
@@ -704,19 +705,7 @@ update msg ({ form, claude } as model) =
             ( { model | progress = Dict.insert message progress model.progress }, Cmd.none )
 
         RemoveError index ->
-            ( { model
-                | errors =
-                    List.indexedMap
-                        (\i e ->
-                            if i == index then
-                                Nothing
-
-                            else
-                                Just e
-                        )
-                        model.errors
-                        |> List.filterMap identity
-              }
+            ( { model | errors = List.indexedMap (\i e -> iif (i == index) Nothing (Just e)) model.errors |> List.filterMap identity }
             , Cmd.none
             )
 
@@ -830,8 +819,7 @@ view model =
     { title = "diggit"
     , body =
         [ H.div [ A.class "app-layout" ]
-            [ viewProgressBars model
-            , viewAside model filteredEvents allTags filteredTagFrequencies
+            [ viewAside model filteredEvents allTags filteredTagFrequencies
             , viewMain model filteredEvents
             , viewErrors model
             ]
@@ -1047,7 +1035,8 @@ viewMain model filteredEvents =
     H.main_
         [ A.class "main-content"
         ]
-        [ case model.repo of
+        [ viewProgressBars model
+        , case model.repo of
             Nothing ->
                 viewEmptyState
 
@@ -1219,13 +1208,9 @@ viewProgressBar ( message, progress ) =
 
 viewErrors : Model -> Html Msg
 viewErrors model =
-    if List.isEmpty model.errors then
-        H.div [] []
-
-    else
-        H.div
-            [ A.class "error-container" ]
-            (List.indexedMap viewError model.errors)
+    H.div
+        [ A.class "error-container" ]
+        (List.indexedMap viewError model.errors)
 
 
 viewError : Int -> Error -> Html Msg

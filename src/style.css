@@ -1,6 +1,9 @@
 /* Base styles */
 body {
-  font-family: system-ui, -apple-system, sans-serif;
+  font-family:
+    system-ui,
+    -apple-system,
+    sans-serif;
   margin: 0;
   padding: 0;
 }
@@ -66,6 +69,7 @@ body {
   padding: 20px;
   overflow-y: auto;
   max-height: 100vh;
+  position: relative;
 }
 
 /* Header */
@@ -161,7 +165,7 @@ body {
 }
 
 .btn-tag-active {
-  background-color: #4CAF50;
+  background-color: #4caf50;
   color: white;
 }
 
@@ -372,14 +376,13 @@ body {
 
 /* Progress bars */
 .progress-container {
-  position: fixed;
+  position: absolute;
   top: 0;
   left: 0;
   right: 0;
   z-index: 1000;
   background: white;
   border-bottom: 1px solid #e0e0e0;
-  padding: 8px;
 }
 
 .progress-item {
@@ -402,7 +405,7 @@ body {
 
 .progress-bar-fill {
   height: 100%;
-  background: #4CAF50;
+  background: #4caf50;
   transition: width 0.3s ease;
 }
 
@@ -421,7 +424,7 @@ body {
   padding: 12px;
   margin-bottom: 8px;
   border-radius: 4px;
-  box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
   display: flex;
   justify-content: space-between;
   align-items: start;
@@ -449,3 +452,4 @@ body {
 .error-close:hover {
   opacity: 1;
 }
+
