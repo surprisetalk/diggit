@@ -93,6 +93,7 @@
               100,
             );
 
+            // TODO: Do a fast clone and then a slow clone in background.
             await git.clone({
               ...gitOpts,
               http,
@@ -101,6 +102,7 @@
               since: new Date(0),
               singleBranch: false,
               noCheckout: true,
+              nonBlocking: true,
               onMessage: console.log,
               onProgress: (event) =>
                 event.phase &&
@@ -117,6 +119,7 @@
               http,
               corsProxy: "https://cors.isomorphic-git.org",
               url,
+              nonBlocking: true,
               onMessage: console.log,
               onProgress: (event) =>
                 event.phase &&
