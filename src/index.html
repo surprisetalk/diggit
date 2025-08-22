@@ -95,6 +95,67 @@
                   avatarUrl: null,
                 };
 
+              // Get the files changed in this commit
+              const changedFiles = [];
+              const fileExtensions = new Set();
+              const directories = new Set();
+
+              try {
+                const commitDiff = await git.walk({
+                  cache,
+                  fs: window.fs,
+                  dir,
+                  trees: [git.TREE({ ref: commit.oid })],
+                  map: async function (filepath, [tree]) {
+                    if (!tree) return null;
+
+                    // Track file extensions
+                    const ext = filepath.match(/\.([^.]+)$/);
+                    if (ext) {
+                      fileExtensions.add(`.${ext[1]}`);
+                    }
+
+                    // Track directories
+                    const dirPath = filepath.substring(
+                      0,
+                      filepath.lastIndexOf("/"),
+                    );
+                    if (dirPath) {
+                      directories.add(`/${dirPath}`);
+                    }
+
+                    return filepath;
+                  },
+                });
+                changedFiles.push(
+                  ...(await Promise.all(commitDiff)).filter(Boolean),
+                );
+              } catch (error) {
+                console.warn(
+                  `Could not get files for commit ${commit.oid}:`,
+                  error,
+                );
+              }
+
+              // Extract hashtags from commit message
+              const hashtags = commit.commit.message.match(/#\w+/g) || [];
+
+              // Date/time tags
+              const commitDate = new Date(
+                commit.commit.author.timestamp * 1000,
+              );
+              const year = commitDate.getFullYear();
+              const month = commitDate
+                .toLocaleString("en-US", { month: "short" })
+                .toLowerCase();
+              const dayOfWeek = commitDate
+                .toLocaleString("en-US", { weekday: "short" })
+                .toLowerCase();
+
+              // Check if merge commit (has more than one parent)
+              const isMerge =
+                commit.commit.parent && commit.commit.parent.length > 1;
+
               commitData[commit.oid] = {
                 id: commit.oid,
                 url: `${url}/commit/${commit.oid}`,
@@ -102,7 +163,17 @@
                 end: null,
                 insertions: 0,
                 deletions: 0,
-                tags: ["commit", `@${commit.commit.author.name}`], // TODO: Add other tags, e.g. >branch, .ext, /dir, #tag, @author
+                tags: [
+                  "commit",
+                  `@${commit.commit.author.name}`,
+                  `${year}`,
+                  `${month}`,
+                  `${dayOfWeek}`,
+                  ...(isMerge ? ["merge"] : []),
+                  ...Array.from(fileExtensions).slice(0, 5), // Limit to 5 most common extensions
+                  ...Array.from(directories).slice(0, 3), // Limit to 3 directories
+                  ...hashtags,
+                ],
                 summary: commit.commit.message,
               };
             }
@@ -114,6 +185,23 @@
               fs: window.fs,
               dir,
             });
+
+            // Track which commits belong to which branches
+            const commitToBranches = {};
+            for (const branch of branches) {
+              const branchCommits = await git.log({
+                cache,
+                fs: window.fs,
+                dir,
+                ref: branch,
+              });
+              for (const commit of branchCommits) {
+                if (!commitToBranches[commit.oid]) {
+                  commitToBranches[commit.oid] = [];
+                }
+                commitToBranches[commit.oid].push(branch);
+              }
+            }
 
             const branchData = {};
             for (const branch of branches) {
@@ -133,6 +221,50 @@
                 tags: ["branch", `>${branch}`], // TODO: Add other tags, e.g. >branch, .ext, /dir, #tag, @author
                 summary: `Branch: ${branch}`,
               };
+            }
+
+            // Get git tags
+            const tags = await git.listTags({
+              cache,
+              fs: window.fs,
+              dir,
+            });
+
+            // Map tags to commits
+            const commitToTags = {};
+            for (const tag of tags) {
+              try {
+                const tagRef = await git.resolveRef({
+                  cache,
+                  fs: window.fs,
+                  dir,
+                  ref: tag,
+                });
+                if (!commitToTags[tagRef]) {
+                  commitToTags[tagRef] = [];
+                }
+                commitToTags[tagRef].push(tag);
+              } catch (error) {
+                console.warn(`Could not resolve tag ${tag}:`, error);
+              }
+            }
+
+            // Add branch tags to commits
+            for (const [commitId, branchList] of Object.entries(
+              commitToBranches,
+            )) {
+              if (commitData[commitId]) {
+                const branchTags = branchList.map((branch) => `>${branch}`);
+                commitData[commitId].tags.push(...branchTags);
+              }
+            }
+
+            // Add git tags to commits
+            for (const [commitId, tagList] of Object.entries(commitToTags)) {
+              if (commitData[commitId]) {
+                const versionTags = tagList.map((tag) => `v:${tag}`);
+                commitData[commitId].tags.push(...versionTags);
+              }
             }
 
             loading(0.9);

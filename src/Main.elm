@@ -262,23 +262,20 @@ type alias Model =
 
 
 allEvents : Model -> List Event
-allEvents model =
-    case model.repo of
-        Nothing ->
-            []
-
-        Just repo ->
-            List.concat
-                [ Dict.values repo.commits
-                , Dict.values repo.github.issues
-                , Dict.values repo.github.events
-                , case repo.report of
-                    Nothing ->
-                        []
-
-                    Just report ->
-                        report.events
-                ]
+allEvents =
+    .repo
+        >> Maybe.map
+            (\repo ->
+                List.concat
+                    [ Dict.values repo.commits
+                    , Dict.values repo.branches
+                    , Dict.values repo.github.issues
+                    , Dict.values repo.github.events
+                    , repo.report |> Maybe.map .events |> Maybe.withDefault []
+                    ]
+                    |> List.sortBy (.start >> negate)
+            )
+        >> Maybe.withDefault []
 
 
 eventVector : List Tag -> Event -> List Float
@@ -946,7 +943,7 @@ viewTagsSection model tagFrequencies =
                     [ text "Popular tags" ]
                 , H.div [ A.class "tag-filters" ]
                     (tagFrequencies
-                        |> List.take 10
+                        |> List.take 100
                         |> List.map
                             (\( tag, count ) ->
                                 tagButton (tag ++ " (" ++ String.fromInt count ++ ")") (TagAdded tag)
