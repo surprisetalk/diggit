@@ -31,6 +31,45 @@
           localStorage.setItem(key, value);
         });
 
+        app.ports.saveGithubData.subscribe(({ repo, data }) => {
+          const key = `github_${repo}`;
+          const storage = JSON.parse(localStorage.getItem(key) || "{}");
+          for (const i in data) {
+            if (!storage[i]) storage[i] = {};
+            for (const j in data[i]) storage[i][j] = data[i][j];
+          }
+          localStorage.setItem(key, JSON.stringify(storage));
+          window.dispatchEvent(
+            new CustomEvent("githubDataChanged", {
+              detail: { repo, data: storage },
+            }),
+          );
+        });
+
+        window.addEventListener("storage", (event) => {
+          if (event.key && event.key.startsWith("github_")) {
+            const repo = event.key.replace("github_", "");
+            const data = JSON.parse(event.newValue || "{}");
+            app.ports.githubDataChanged.send({ repo, data });
+          }
+        });
+        window.addEventListener("githubDataChanged", (event) => {
+          app.ports.githubDataChanged.send(event.detail);
+        });
+
+        const loadExistingGithubData = () => {
+          for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key && key.startsWith("github_")) {
+              const repo = key.replace("github_", "");
+              const data = JSON.parse(localStorage.getItem(key) || "{}");
+              app.ports.githubDataChanged.send({ repo, data });
+            }
+          }
+        };
+
+        loadExistingGithubData();
+
         let cache = {};
         let loadInterval;
 
@@ -291,18 +330,10 @@
               tags: {},
               branches: branchData,
               files,
-              github: { 
-                issues: {}, 
-                events: {}, 
-                users: {},
-                cursors: {
-                  eventsCursor: null,
-                  issuesCursor: null,
-                  lastFetch: null,
-                  eventsPage: 1,
-                  issuesPage: 1
-                }
-              },
+              github: JSON.parse(
+                localStorage.getItem(`github_https://github.com/${repoUrl}`) ||
+                  "{}",
+              ),
               report: null,
             });
           } catch (error) {

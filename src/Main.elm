@@ -15,6 +15,7 @@ import Html.Events as A
 import Html.Lazy as H
 import Html.Style as S
 import Http
+import Iso8601
 import Json.Decode as D
 import Json.Encode as E
 import Markdown
@@ -117,6 +118,12 @@ port progressReported : ({ message : String, progress : Float } -> msg) -> Sub m
 
 
 port saveToLocalStorage : { key : String, value : String } -> Cmd msg
+
+
+port saveGithubData : { repo : String, data : E.Value } -> Cmd msg
+
+
+port githubDataChanged : (E.Value -> msg) -> Sub msg
 
 
 
@@ -354,24 +361,27 @@ authorDecoder =
 githubDecoder : D.Decoder Github
 githubDecoder =
     D.map3 Github
-        (D.field "issues"
-            (D.dict eventDecoder
-                |> D.map
-                    (Dict.foldl
-                        (\k v acc ->
-                            case String.toInt k of
-                                Just intKey ->
-                                    Dict.insert intKey v acc
+        (D.maybe
+            (D.field "issues"
+                (D.dict eventDecoder
+                    |> D.map
+                        (Dict.foldl
+                            (\k v acc ->
+                                case String.toInt k of
+                                    Just intKey ->
+                                        Dict.insert intKey v acc
 
-                                Nothing ->
-                                    acc
+                                    Nothing ->
+                                        acc
+                            )
+                            Dict.empty
                         )
-                        Dict.empty
-                    )
+                )
             )
+            |> D.map (Maybe.withDefault Dict.empty)
         )
-        (D.field "events" (D.dict eventDecoder))
-        (D.field "users" (D.dict githubUserDecoder))
+        (D.maybe (D.field "events" (D.dict eventDecoder)) |> D.map (Maybe.withDefault Dict.empty))
+        (D.maybe (D.field "users" (D.dict githubUserDecoder)) |> D.map (Maybe.withDefault Dict.empty))
 
 
 githubUserDecoder : D.Decoder GithubUser
@@ -552,6 +562,52 @@ formatGithubEventSummary eventType payload =
             eventType
 
 
+encodeEvent : Event -> E.Value
+encodeEvent event =
+    E.object
+        [ ( "id", E.string event.id )
+        , ( "url", E.string event.url )
+        , ( "start", E.float event.start )
+        , ( "end"
+          , case event.end of
+                Just endTime ->
+                    E.float endTime
+
+                Nothing ->
+                    E.null
+          )
+        , ( "insertions", E.int event.insertions )
+        , ( "deletions", E.int event.deletions )
+        , ( "tags", E.list E.string (Set.toList event.tags) )
+        , ( "summary", E.string event.summary )
+        ]
+
+
+encodeGithubUser : GithubUser -> E.Value
+encodeGithubUser user =
+    E.object
+        [ ( "id", E.string user.id )
+        , ( "login", E.string user.login )
+        , ( "name"
+          , case user.name of
+                Just name ->
+                    E.string name
+
+                Nothing ->
+                    E.null
+          )
+        , ( "avatar_url", E.string user.avatarUrl )
+        , ( "html_url", E.string user.htmlUrl )
+        ]
+
+
+githubDataDecoder : D.Decoder { repo : String, data : Github }
+githubDataDecoder =
+    D.map2 (\repo data -> { repo = repo, data = data })
+        (D.field "repo" D.string)
+        (D.field "data" githubDecoder)
+
+
 
 ---- INIT ---------------------------------------------------------------------
 
@@ -654,13 +710,14 @@ type Msg
     | ClaudeResponseReceived (Result Http.Error String)
     | Hovered (Set Tag)
     | RepoLoaded D.Value
-    | GithubEventsFetched Int (Result Http.Error (List Event))
-    | GithubIssuesFetched Int (Result Http.Error (Dict Int Event))
+    | GithubEventsFetched Int (Maybe Time.Posix) (Result Http.Error (List Event))
+    | GithubIssuesFetched Int (Maybe Time.Posix) (Result Http.Error (Dict Int Event))
     | GithubUsersFetched (Result Http.Error (List GithubUser))
     | AddError String
     | PageErrored String
     | ProgressReported { message : String, progress : Float }
     | RemoveError Int
+    | GithubDataChanged E.Value
 
 
 
@@ -673,6 +730,7 @@ subs model =
         [ repoLoaded RepoLoaded
         , pageErrored PageErrored
         , progressReported ProgressReported
+        , githubDataChanged GithubDataChanged
         ]
 
 
@@ -805,10 +863,25 @@ update msg ({ form, claude } as model) =
         RepoLoaded value ->
             case D.decodeValue repoDecoder value of
                 Ok repo ->
+                    let
+                        latestEventTime =
+                            repo.github.events
+                                |> Dict.values
+                                |> List.map .start
+                                |> List.maximum
+                                |> Maybe.map (round >> Time.millisToPosix)
+
+                        latestIssueTime =
+                            repo.github.issues
+                                |> Dict.values
+                                |> List.map .start
+                                |> List.maximum
+                                |> Maybe.map (round >> Time.millisToPosix)
+                    in
                     ( { model | repo = Just repo }
                     , Cmd.batch
-                        [ fetchGithubEvents 1 repo
-                        , fetchGithubIssues 1 repo
+                        [ Cmd.none -- TODO: fetchGithubEvents 1 latestEventTime repo.url
+                        , fetchGithubIssues 1 latestIssueTime repo.url
                         ]
                     )
 
@@ -817,14 +890,24 @@ update msg ({ form, claude } as model) =
                     , Cmd.none
                     )
 
-        GithubEventsFetched page (Ok events) ->
+        GithubEventsFetched page maybeSince (Ok events) ->
             case model.repo of
                 Just repo ->
-                    ( { model | repo = Just { repo | github = { issues = repo.github.issues, events = Dict.union (events |> List.map (\event -> ( event.id, event )) |> Dict.fromList) repo.github.events, users = repo.github.users } } }
+                    let
+                        newEvents =
+                            events |> List.map (\event -> ( event.id, event )) |> Dict.fromList
+
+                        githubData =
+                            E.object
+                                [ ( "events", E.dict identity encodeEvent newEvents )
+                                ]
+                    in
+                    ( model
                     , Cmd.batch
-                        [ collectGithubUsers events |> fetchGithubUsers
+                        [ saveGithubData { repo = repo.url, data = githubData }
+                        , collectGithubUsers events |> fetchGithubUsers
                         , if List.length events > 0 then
-                            fetchGithubEvents (page + 1) { repo | github = { issues = repo.github.issues, events = Dict.union (events |> List.map (\event -> ( event.id, event )) |> Dict.fromList) repo.github.events, users = repo.github.users } }
+                            fetchGithubEvents (page + 1) maybeSince repo.url
 
                           else
                             Cmd.none
@@ -834,30 +917,48 @@ update msg ({ form, claude } as model) =
                 Nothing ->
                     ( model, Cmd.none )
 
-        GithubEventsFetched _ (Err err) ->
+        GithubEventsFetched _ _ (Err err) ->
             ( addError ("Failed to fetch GitHub events: " ++ httpErrorToString err) model, Cmd.none )
 
-        GithubIssuesFetched page (Ok issues) ->
+        GithubIssuesFetched page maybeSince (Ok issues) ->
             case model.repo of
                 Just repo ->
-                    ( { model | repo = Just { repo | github = { issues = Dict.union issues repo.github.issues, events = repo.github.events, users = repo.github.users } } }
-                    , if Dict.size issues > 0 then
-                        fetchGithubIssues (page + 1) { repo | github = { issues = Dict.union issues repo.github.issues, events = repo.github.events, users = repo.github.users } }
+                    let
+                        githubData =
+                            E.object
+                                [ ( "issues", E.dict String.fromInt encodeEvent issues )
+                                ]
+                    in
+                    ( model
+                    , Cmd.batch
+                        [ saveGithubData { repo = repo.url, data = githubData }
+                        , if Dict.size issues > 0 then
+                            fetchGithubIssues (page + 1) maybeSince repo.url
 
-                      else
-                        Cmd.none
+                          else
+                            Cmd.none
+                        ]
                     )
 
                 Nothing ->
                     ( model, Cmd.none )
 
-        GithubIssuesFetched _ (Err err) ->
+        GithubIssuesFetched _ _ (Err err) ->
             ( addError ("Failed to fetch GitHub issues: " ++ httpErrorToString err) model, Cmd.none )
 
         GithubUsersFetched (Ok users) ->
             case model.repo of
                 Just repo ->
-                    ( { model | repo = Just { repo | github = { issues = repo.github.issues, events = repo.github.events, users = Dict.union (users |> List.map (\user -> ( user.id, user )) |> Dict.fromList) repo.github.users } } }, Cmd.none )
+                    let
+                        newUsers =
+                            users |> List.map (\user -> ( user.id, user )) |> Dict.fromList
+
+                        githubData =
+                            E.object
+                                [ ( "users", E.dict identity encodeGithubUser newUsers )
+                                ]
+                    in
+                    ( model, saveGithubData { repo = repo.url, data = githubData } )
 
                 Nothing ->
                     ( model, Cmd.none )
@@ -876,6 +977,23 @@ update msg ({ form, claude } as model) =
 
         RemoveError index ->
             ( { model | errors = List.indexedMap (\i e -> iif (i == index) Nothing (Just e)) model.errors |> List.filterMap identity }, Cmd.none )
+
+        GithubDataChanged value ->
+            case D.decodeValue githubDataDecoder value of
+                Ok { repo, data } ->
+                    case model.repo of
+                        Just currentRepo ->
+                            if currentRepo.url == repo then
+                                ( { model | repo = Just { currentRepo | github = data } }, Cmd.none )
+
+                            else
+                                ( model, Cmd.none )
+
+                        Nothing ->
+                            ( model, Cmd.none )
+
+                Err _ ->
+                    ( model, Cmd.none )
 
 
 addError : String -> Model -> Model
@@ -966,9 +1084,9 @@ extractRepoFromUrl url =
            )
 
 
-fetchGithubEvents : Int -> Repo -> Cmd Msg
-fetchGithubEvents page repo =
-    case extractRepoFromUrl repo.url |> Maybe.map (\( owner, repoName ) -> ( owner, repoName )) of
+fetchGithubEvents : Int -> Maybe Time.Posix -> String -> Cmd Msg
+fetchGithubEvents page maybeSince repoUrl =
+    case extractRepoFromUrl repoUrl of
         Just ( owner, repoName ) ->
             Http.request
                 { method = "GET"
@@ -976,10 +1094,9 @@ fetchGithubEvents page repo =
                     [ Http.header "Accept" "application/vnd.github.v3+json"
                     , Http.header "User-Agent" "diggit-app"
                     ]
-                , url =
-                    "https://api.github.com/repos/" ++ owner ++ "/" ++ repoName ++ "/events?per_page=100&page=" ++ String.fromInt page
+                , url = "https://api.github.com/repos/" ++ owner ++ "/" ++ repoName ++ "/events?per_page=100&page=" ++ String.fromInt page
                 , body = Http.emptyBody
-                , expect = Http.expectJson (GithubEventsFetched page) githubEventsDecoder
+                , expect = Http.expectJson (GithubEventsFetched page maybeSince) githubEventsDecoder
                 , timeout = Just 30000
                 , tracker = Nothing
                 }
@@ -988,19 +1105,34 @@ fetchGithubEvents page repo =
             Cmd.none
 
 
-fetchGithubIssues : Int -> Repo -> Cmd Msg
-fetchGithubIssues page repo =
-    case extractRepoFromUrl repo.url |> Maybe.map (\( owner, repoName ) -> ( owner, repoName )) of
+fetchGithubIssues : Int -> Maybe Time.Posix -> String -> Cmd Msg
+fetchGithubIssues page maybeSince repoUrl =
+    case extractRepoFromUrl repoUrl of
         Just ( owner, repoName ) ->
+            let
+                sinceParam =
+                    case maybeSince of
+                        Just posix ->
+                            "&since=" ++ Iso8601.fromTime posix
+
+                        Nothing ->
+                            ""
+
+                baseUrl =
+                    "https://api.github.com/repos/" ++ owner ++ "/" ++ repoName ++ "/issues?state=all&per_page=100&page=" ++ String.fromInt page
+
+                urlWithSince =
+                    baseUrl ++ sinceParam
+            in
             Http.request
                 { method = "GET"
                 , headers =
                     [ Http.header "Accept" "application/vnd.github.v3+json"
                     , Http.header "User-Agent" "diggit-app"
                     ]
-                , url = "https://api.github.com/repos/" ++ owner ++ "/" ++ repoName ++ "/issues?state=all&per_page=100&page=" ++ String.fromInt page
+                , url = urlWithSince
                 , body = Http.emptyBody
-                , expect = Http.expectJson (GithubIssuesFetched page) githubIssuesDecoder
+                , expect = Http.expectJson (GithubIssuesFetched page maybeSince) githubIssuesDecoder
                 , timeout = Just 30000
                 , tracker = Nothing
                 }
