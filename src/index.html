@@ -32,7 +32,6 @@
         app.ports.requestRepo.subscribe(async (repoUrl) => {
           if (!repoUrl) return;
           const loading = (progress) =>
-            // TODO: Is this working?
             app.ports.progressReported.send({
               message: `Cloning ${repoUrl}...`,
               progress,
@@ -41,9 +40,9 @@
           try {
             const dir = `/repos/${repoUrl}`;
             const url = `https://github.com/${repoUrl}`;
+            const gitOpts = { cache, fs: window.fs, dir };
 
             loading(0.1);
-
             let n = 0;
             loadInterval = setInterval(
               () => loading(Math.min(0.7, (0.1 + ++n * 0.0005) / 0.7)),
@@ -51,10 +50,8 @@
             );
 
             await git.clone({
-              cache,
-              fs: window.fs,
-              http, // TODO: Track progress?
-              dir,
+              ...gitOpts,
+              http,
               corsProxy: "https://cors.isomorphic-git.org",
               url,
               since: new Date(0),
@@ -72,83 +69,62 @@
             });
 
             clearInterval(loadInterval);
-
             loading(0.7);
-
-            const commits = await git.log({
-              cache,
-              fs: window.fs,
-              dir,
-            });
+            const commits = await git.log(gitOpts);
 
             const authors = {};
             const commitData = {};
 
             for (const commit of commits) {
-              const authorId = commit.commit.author.email;
-
+              const { author, message, parent } = commit.commit;
+              const authorId = author.email;
               if (!authors[authorId])
                 authors[authorId] = {
                   id: authorId,
-                  name: commit.commit.author.name,
-                  email: commit.commit.author.email,
+                  name: author.name,
+                  email: author.email,
                   avatarUrl: null,
                 };
 
-              // Get the files changed in this commit
               const changedFiles = [];
               const fileExtensions = new Set();
               const directories = new Set();
 
               try {
-                // Get parent commit for comparison
-                const parentOid =
-                  commit.commit.parent && commit.commit.parent[0];
+                const parentOid = parent && parent[0];
                 if (parentOid) {
                   const commitDiff = await git.walk({
-                    cache,
-                    fs: window.fs,
-                    dir,
+                    ...gitOpts,
                     trees: [
                       git.TREE({ ref: parentOid }),
                       git.TREE({ ref: commit.oid }),
                     ],
                     map: async function (filepath, [A, B]) {
-                      // ignore directories
-                      if (filepath === ".") return;
                       if (
+                        filepath === "." ||
                         (await A?.type()) === "tree" ||
                         (await B?.type()) === "tree"
                       )
                         return;
-
-                      // generate ids
                       const Aoid = await A?.oid();
                       const Boid = await B?.oid();
-
-                      // determine modification type
-                      let type = "equal";
-                      if (Aoid !== Boid) type = "modify";
-                      if (Aoid === undefined) type = "add";
-                      if (Boid === undefined) type = "remove";
-
-                      // Only track changed files
+                      const type =
+                        Aoid === undefined
+                          ? "add"
+                          : Boid === undefined
+                            ? "remove"
+                            : Aoid !== Boid
+                              ? "modify"
+                              : "equal";
                       if (type !== "equal") {
-                        // Track file extensions
                         const ext = filepath.match(/\.([^.]+)$/);
                         if (ext) fileExtensions.add(`.${ext[1]}`);
-
-                        // Track directories
                         const dirPath = filepath.substring(
                           0,
                           filepath.lastIndexOf("/"),
                         );
                         if (dirPath) directories.add(`/${dirPath}`);
-
-                        return {
-                          path: `/${filepath}`,
-                          type: type,
-                        };
+                        return { path: `/${filepath}`, type };
                       }
                       return null;
                     },
@@ -157,30 +133,19 @@
                     ...(await Promise.all(commitDiff)).filter(Boolean),
                   );
                 } else {
-                  // For initial commit, list all files as added
                   const commitDiff = await git.walk({
-                    cache,
-                    fs: window.fs,
-                    dir,
+                    ...gitOpts,
                     trees: [git.TREE({ ref: commit.oid })],
                     map: async function (filepath, [tree]) {
                       if (!tree || (await tree.type()) === "tree") return null;
-
-                      // Track file extensions
                       const ext = filepath.match(/\.([^.]+)$/);
                       if (ext) fileExtensions.add(`.${ext[1]}`);
-
-                      // Track directories
                       const dirPath = filepath.substring(
                         0,
                         filepath.lastIndexOf("/"),
                       );
                       if (dirPath) directories.add(`/${dirPath}`);
-
-                      return {
-                        path: `/${filepath}`,
-                        type: "add",
-                      };
+                      return { path: `/${filepath}`, type: "add" };
                     },
                   });
                   changedFiles.push(
@@ -194,64 +159,40 @@
                 );
               }
 
-              // Extract hashtags from commit message
-              const hashtags = commit.commit.message.match(/#\w+/g) || [];
-
-              // Date/time tags
-              const commitDate = new Date(
-                commit.commit.author.timestamp * 1000,
-              );
+              const hashtags = message.match(/#\w+/g) || [];
+              const commitDate = new Date(author.timestamp * 1000);
               const year = commitDate.getFullYear();
-              const month = commitDate
-                .toLocaleString("en-US", { month: "short" })
-                .toLowerCase();
-
-              // Check if merge commit (has more than one parent)
-              const isMerge =
-                commit.commit.parent && commit.commit.parent.length > 1;
+              const isMerge = parent && parent.length > 1;
 
               commitData[commit.oid] = {
                 id: commit.oid,
                 url: `${url}/commit/${commit.oid}`,
-                start: commit.commit.author.timestamp * 1000,
+                start: author.timestamp * 1000,
                 end: null,
                 insertions: 0,
                 deletions: 0,
                 tags: [
                   "commit",
-                  `@${commit.commit.author.name}`,
+                  `@${author.name}`,
                   `${year}`,
-                  // `${year}-${month}`,
                   ...(isMerge ? ["merge"] : []),
                   ...Array.from(fileExtensions),
-                  ...Array.from(directories).slice(0, 100), // Limit to 100 directories
+                  ...Array.from(directories).slice(0, 100),
                   ...hashtags,
                 ],
-                summary: commit.commit.message,
+                summary: message,
               };
             }
 
             loading(0.8);
+            const branches = await git.listBranches(gitOpts);
 
-            const branches = await git.listBranches({
-              cache,
-              fs: window.fs,
-              dir,
-            });
-
-            // Track which commits belong to which branches
             const commitToBranches = {};
             for (const branch of branches) {
-              const branchCommits = await git.log({
-                cache,
-                fs: window.fs,
-                dir,
-                ref: branch,
-              });
+              const branchCommits = await git.log({ ...gitOpts, ref: branch });
               for (const commit of branchCommits) {
-                if (!commitToBranches[commit.oid]) {
+                if (!commitToBranches[commit.oid])
                   commitToBranches[commit.oid] = [];
-                }
                 commitToBranches[commit.oid].push(branch);
               }
             }
@@ -259,103 +200,77 @@
             const branchData = {};
             for (const branch of branches) {
               const branchCommit = await git.resolveRef({
-                cache,
-                fs: window.fs,
-                dir,
+                ...gitOpts,
                 ref: branch,
               });
               branchData[branch] = {
                 id: branchCommit,
                 url: `${url}/tree/${branch}`,
-                start: Date.now(), // TODO:
+                start: Date.now(), // TODO: This is wrong.
                 end: null,
                 insertions: 0,
                 deletions: 0,
-                tags: ["branch", `>${branch}`], // TODO: Add other tags, e.g. >branch, .ext, /dir, #tag, @author
+                tags: ["branch", `>${branch}`],
                 summary: `Branch: ${branch}`,
               };
             }
 
-            // Get git tags
-            const tags = await git.listTags({
-              cache,
-              fs: window.fs,
-              dir,
-            });
-
-            // Map tags to commits
+            const tags = await git.listTags(gitOpts);
             const commitToTags = {};
             for (const tag of tags) {
               try {
-                const tagRef = await git.resolveRef({
-                  cache,
-                  fs: window.fs,
-                  dir,
-                  ref: tag,
-                });
-                if (!commitToTags[tagRef]) {
-                  commitToTags[tagRef] = [];
-                }
+                const tagRef = await git.resolveRef({ ...gitOpts, ref: tag });
+                if (!commitToTags[tagRef]) commitToTags[tagRef] = [];
                 commitToTags[tagRef].push(tag);
               } catch (error) {
                 console.warn(`Could not resolve tag ${tag}:`, error);
               }
             }
 
-            // Add branch tags to commits
             for (const [commitId, branchList] of Object.entries(
               commitToBranches,
             )) {
-              if (commitData[commitId]) {
-                const branchTags = branchList.map((branch) => `>${branch}`);
-                commitData[commitId].tags.push(...branchTags);
-              }
+              if (commitData[commitId])
+                commitData[commitId].tags.push(
+                  ...branchList.map((branch) => `>${branch}`),
+                );
             }
-
-            // Add git tags to commits
             for (const [commitId, tagList] of Object.entries(commitToTags)) {
-              if (commitData[commitId]) {
-                const versionTags = tagList.map((tag) => `v:${tag}`);
-                commitData[commitId].tags.push(...versionTags);
-              }
+              if (commitData[commitId])
+                commitData[commitId].tags.push(
+                  ...tagList.map((tag) => `v:${tag}`),
+                );
             }
 
             loading(0.9);
-
-            // TODO: Inline this.
-            async function getFileList(dir, path = "") {
+            const getFileList = async (dir, path = "") => {
               const files = [];
               try {
                 const entries = await window.pfs.readdir(dir + path);
                 for (const entry of entries) {
                   const fullPath = path + "/" + entry;
                   const stat = await window.pfs.stat(dir + fullPath);
-                  if (stat.isDirectory()) {
-                    const subFiles = await getFileList(dir, fullPath);
-                    files.push(...subFiles);
-                  } else {
-                    files.push(fullPath.substring(1));
-                  }
+                  files.push(
+                    ...(stat.isDirectory()
+                      ? await getFileList(dir, fullPath)
+                      : [fullPath.substring(1)]),
+                  );
                 }
               } catch (error) {
                 console.warn(`Could not read directory ${dir + path}:`, error);
               }
               return files;
-            }
+            };
             const files = await getFileList(dir);
 
             app.ports.repoLoaded.send({
-              url: url,
+              url,
               commits: commitData,
-              authors: authors,
+              authors,
               tags: {},
               branches: branchData,
-              files: files,
-              github: {
-                issues: {},
-                events: {},
-                users: {},
-              },
+              files,
+              github: { issues: {}, events: {}, users: {} },
               report: null,
             });
           } catch (error) {
