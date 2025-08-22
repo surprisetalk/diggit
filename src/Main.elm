@@ -775,6 +775,7 @@ encodeClaudeRequest model prompt =
 
 mapClaudeModel : String -> String
 mapClaudeModel model =
+    -- TODO: Inline these model names into the dropdown.
     case model of
         "opus41" ->
             "claude-3-opus-20240229"
@@ -1069,10 +1070,9 @@ viewMain model filteredEvents =
             Nothing ->
                 viewEmptyState
 
-            Just repo ->
+            Just _ ->
                 H.div [ S.displayFlex, S.flexDirectionColumn, S.width "100%" ]
-                    [ viewReportSection repo model
-                    , viewEventsSection filteredEvents model
+                    [ viewEventsSection filteredEvents model
                     , viewVisualization filteredEvents
                     ]
         ]
@@ -1084,22 +1084,6 @@ viewEmptyState =
         [ H.h2 [] [ text "Welcome to Diggit" ]
         , H.p [] [ text "Select a repository to start exploring its architecture" ]
         ]
-
-
-viewReportSection : Repo -> Model -> Html Msg
-viewReportSection repo model =
-    case repo.report of
-        Nothing ->
-            text ""
-
-        Just report ->
-            H.div [ A.class "report-section" ]
-                [ H.div [ A.class "report-summary" ]
-                    [ H.h3 [] [ text "AI Summary" ]
-                    , H.p [] [ text (iif (String.isEmpty report.summary) "Generating summary..." report.summary) ]
-                    ]
-                , iif (List.isEmpty report.suggestions) (text "") <| H.div [ A.class "suggestions" ] (List.map viewSuggestion report.suggestions)
-                ]
 
 
 viewSuggestion : Suggestion -> Html Msg

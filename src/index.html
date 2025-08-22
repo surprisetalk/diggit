@@ -50,7 +50,7 @@
             loading(0.1);
             let n = 0;
             loadInterval = setInterval(
-              () => loading(Math.min(0.7, (0.1 + ++n * 0.0005) / 0.7)),
+              () => loading(Math.min(0.7, (0.1 + ++n * 0.001) / 0.7)),
               100,
             );
 
@@ -62,23 +62,6 @@
               since: new Date(0),
               singleBranch: false,
               noCheckout: true,
-              onMessage: console.log,
-              onProgress: (event) =>
-                event.phase &&
-                event.loaded &&
-                event.total &&
-                app.ports.progressReported.send({
-                  message: `${repoUrl}: ${event.phase}`,
-                  progress: event.loaded / event.total,
-                }),
-            });
-
-            await git.fetch({
-              ...gitOpts,
-              http,
-              corsProxy: "https://cors.isomorphic-git.org",
-              url,
-              since: new Date(0),
               onMessage: console.log,
               onProgress: (event) =>
                 event.phase &&
