@@ -23,6 +23,7 @@
           flags: {
             claudeAuth: localStorage.getItem("claudeAuth"),
             claudeModel: localStorage.getItem("claudeModel") || "sonnet41",
+            timezone: -new Date().getTimezoneOffset(),
           },
         });
 

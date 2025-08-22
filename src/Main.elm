@@ -58,13 +58,28 @@ round2 =
     (*) 100 >> floor >> toFloat >> flip (/) 100
 
 
-formatEventDate : Float -> String
-formatEventDate time =
-    time
-        |> round
-        |> Time.millisToPosix
-        |> Date.fromPosix Time.utc
-        |> Date.format "yyyy-MM-dd"
+formatEventDate : Time.Zone -> Float -> String
+formatEventDate timezone time =
+    let
+        posix =
+            time
+                |> round
+                |> Time.millisToPosix
+
+        date =
+            Date.fromPosix timezone posix
+
+        hour =
+            Time.toHour timezone posix
+                |> String.fromInt
+                |> String.padLeft 2 '0'
+
+        minute =
+            Time.toMinute timezone posix
+                |> String.fromInt
+                |> String.padLeft 2 '0'
+    in
+    Date.format "yyyy-MM-dd" date ++ " " ++ hour ++ ":" ++ minute
 
 
 usd : Float -> String
@@ -264,6 +279,7 @@ type alias Model =
     , repo : Maybe Repo
     , claude : Claude
     , jobs : Array Job
+    , timezone : Time.Zone
     }
 
 
@@ -400,6 +416,7 @@ suggestionDecoder =
 type alias Flags =
     { claudeAuth : Maybe String
     , claudeModel : Maybe String
+    , timezone : Maybe Int
     }
 
 
@@ -408,6 +425,11 @@ init flags url nav =
     let
         filters =
             router url
+
+        timezone =
+            flags.timezone
+                |> Maybe.map (\offset -> Time.customZone offset [])
+                |> Maybe.withDefault Time.utc
 
         model =
             { nav = nav
@@ -424,6 +446,7 @@ init flags url nav =
                 , history = []
                 }
             , jobs = Array.empty
+            , timezone = timezone
             }
     in
     ( model, requestRepo filters.repo )
@@ -698,7 +721,7 @@ view model =
                     (\event ->
                         let
                             eventStartDate =
-                                formatEventDate event.start
+                                formatEventDate model.timezone event.start
 
                             startOk =
                                 String.isEmpty model.route.start
@@ -711,12 +734,12 @@ view model =
                                                 True
 
                                             Just e ->
-                                                formatEventDate e <= model.route.end
+                                                formatEventDate model.timezone e <= model.route.end
                                        )
 
                             tagsOk =
                                 Set.isEmpty model.route.tags
-                                    || not (Set.isEmpty (Set.intersect model.route.tags event.tags))
+                                    || Set.isEmpty (Set.diff model.route.tags event.tags)
                         in
                         startOk && endOk && tagsOk
                     )
@@ -872,6 +895,7 @@ viewTagsSection model tagFrequencies =
                 [ H.div [ A.class "section-title" ] [ text "Popular tags" ]
                 , H.div [ A.class "tag-filters" ]
                     (tagFrequencies
+                        |> List.filter (\( tag, _ ) -> not (Set.member tag model.form.tags))
                         |> List.take 100
                         |> List.map (\( tag, count ) -> tagButton (tag ++ " (" ++ String.fromInt count ++ ")") (TagAdded tag))
                     )
@@ -925,20 +949,20 @@ viewClaudeAside model filteredEvents =
         , H.section []
             [ H.h3 [] [ text "API Preview" ]
             , H.pre [ A.class "api-preview" ]
-                [ text (formatEventsForApi filteredEvents) ]
+                [ text (formatEventsForApi model.timezone filteredEvents) ]
             ]
         ]
 
 
-formatEventsForApi : List Event -> String
-formatEventsForApi events =
+formatEventsForApi : Time.Zone -> List Event -> String
+formatEventsForApi timezone events =
     events
         |> List.take 50
         |> List.map
             (\event ->
                 let
                     eventDate =
-                        formatEventDate event.start
+                        formatEventDate timezone event.start
 
                     tags =
                         Set.toList event.tags |> String.join " "
@@ -1028,7 +1052,7 @@ viewEvent model event =
             not (Set.isEmpty (Set.intersect model.hover event.tags))
 
         eventDate =
-            formatEventDate event.start
+            formatEventDate model.timezone event.start
     in
     H.div
         [ A.class "event-card"
