@@ -619,7 +619,6 @@ update msg ({ form, claude } as model) =
                     , Cmd.batch
                         [-- TODO: clusters 10 |> Random.generate ReportTagClustered
                          -- TODO: clusters 100 |> Random.generate ReportEventClustered
-                         -- TODO: Claude.summarize model.repo
                         ]
                     )
 
@@ -943,7 +942,7 @@ viewTagsSection model tagFrequencies =
                     [ text "Popular tags" ]
                 , H.div [ A.class "tag-filters" ]
                     (tagFrequencies
-                        |> List.take 100
+                        |> List.take 1000
                         |> List.map
                             (\( tag, count ) ->
                                 tagButton (tag ++ " (" ++ String.fromInt count ++ ")") (TagAdded tag)
@@ -982,6 +981,7 @@ viewClaudeSection model =
             , A.style "padding" "10px 20px"
             , A.style "font-size" "14px"
             , S.marginBottomRem 1
+            , A.disabled (model.repo |> Maybe.andThen .report |> (/=) Nothing)
             ]
             [ text "Generate AI Report" ]
         , H.div [ A.class "section-title" ]
@@ -1109,7 +1109,7 @@ viewEvent model event =
     in
     H.div
         [ A.class "event-card"
-        , A.style "background-color" (iif isHovered "#f8f8f8" "white")
+        , A.style "background-color" (iif isHovered "#1c2128" "#161b22")
         , A.onMouseEnter (Hovered event.tags)
         , A.onMouseLeave (Hovered Set.empty)
         ]
