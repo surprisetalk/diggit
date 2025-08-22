@@ -747,6 +747,7 @@ view model =
         [ H.div [ A.class "app-layout" ]
             [ viewAside model filteredEvents allTags filteredTagFrequencies
             , viewMain model filteredEvents
+            , viewClaudeAside model filteredEvents
             , viewErrors model
             ]
         ]
@@ -757,6 +758,7 @@ viewAside : Model -> List Event -> List Tag -> List ( Tag, Int ) -> Html Msg
 viewAside model filteredEvents allTags tagFrequencies =
     H.aside
         [ A.class "sidebar"
+        , S.borderRight "1px solid #30363d"
         ]
         [ viewHeader
         , viewRepoSection model
@@ -886,35 +888,64 @@ tagButton label msg =
         [ text label ]
 
 
-viewClaudeForm : Model -> Html Msg
-viewClaudeForm model =
-    H.form [ A.class "claude-form", S.display S.flex, S.marginBottomPx 20, S.gapPx 10, S.alignItems S.center ]
-        [ H.input
-            [ A.type_ "password"
-            , A.placeholder "Anthropic API Key"
-            , A.value model.claude.auth
-            , A.onInput ClaudeAuthChanged
-            , A.class "input"
-            , S.widthPx 200
-            , S.marginRightAuto
-            ]
-            []
-        , H.select
-            [ A.onInput ClaudeModelChanged
-            , A.class "select"
-            ]
-            [ H.option [ A.value "opus41", A.selected (model.claude.model == "opus41") ] [ text "Opus 4.1" ]
-            , H.option [ A.value "sonnet41", A.selected (model.claude.model == "sonnet41") ] [ text "Sonnet 4.1" ]
-            , H.option [ A.value "haiku35", A.selected (model.claude.model == "haiku35") ] [ text "Haiku 3.5" ]
-            ]
-        , H.button
-            [ A.onClick ReportRequested
-            , A.class "primary-btn"
-            , A.type_ "button"
-            , A.disabled (model.repo |> Maybe.andThen .report |> (/=) Nothing)
-            ]
-            [ text "Generate Report" ]
+viewClaudeAside : Model -> List Event -> Html Msg
+viewClaudeAside model filteredEvents =
+    H.aside
+        [ A.class "sidebar"
+        , S.borderLeft "1px solid #30363d"
         ]
+        [ H.section []
+            [ H.h3 [] [ text "Claude Settings" ]
+            , H.div [ A.class "claude-form" ]
+                [ H.input
+                    [ A.type_ "password"
+                    , A.placeholder "Anthropic API Key"
+                    , A.value model.claude.auth
+                    , A.onInput ClaudeAuthChanged
+                    , A.class "input"
+                    ]
+                    []
+                , H.select
+                    [ A.onInput ClaudeModelChanged
+                    , A.class "select"
+                    ]
+                    [ H.option [ A.value "opus41", A.selected (model.claude.model == "opus41") ] [ text "Opus 4.1" ]
+                    , H.option [ A.value "sonnet41", A.selected (model.claude.model == "sonnet41") ] [ text "Sonnet 4.1" ]
+                    , H.option [ A.value "haiku35", A.selected (model.claude.model == "haiku35") ] [ text "Haiku 3.5" ]
+                    ]
+                , H.button
+                    [ A.onClick ReportRequested
+                    , A.class "primary-btn"
+                    , A.type_ "button"
+                    , A.disabled (model.repo |> Maybe.andThen .report |> (/=) Nothing)
+                    ]
+                    [ text "Generate Report" ]
+                ]
+            ]
+        , H.section []
+            [ H.h3 [] [ text "API Preview" ]
+            , H.pre [ A.class "api-preview" ]
+                [ text (formatEventsForApi filteredEvents) ]
+            ]
+        ]
+
+
+formatEventsForApi : List Event -> String
+formatEventsForApi events =
+    events
+        |> List.take 50
+        |> List.map
+            (\event ->
+                let
+                    eventDate =
+                        formatEventDate event.start
+
+                    tags =
+                        Set.toList event.tags |> String.join " "
+                in
+                eventDate ++ " " ++ tags ++ " " ++ event.summary
+            )
+        |> String.join "\n"
 
 
 viewMain : Model -> List Event -> Html Msg
@@ -928,9 +959,8 @@ viewMain model filteredEvents =
                 viewEmptyState
 
             Just repo ->
-                H.div [ S.display S.flex, S.flexDirection S.column, S.width "100%" ]
-                    [ viewClaudeForm model
-                    , viewReportSection repo model
+                H.div [ S.displayFlex, S.flexDirectionColumn, S.width "100%" ]
+                    [ viewReportSection repo model
                     , viewEventsSection filteredEvents model
                     , viewVisualization filteredEvents
                     ]
