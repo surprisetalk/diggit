@@ -19,6 +19,7 @@ import Json.Decode as D
 import Json.Encode as E
 import Set exposing (Set)
 import Task exposing (Task)
+import Time
 import Url exposing (Url)
 import Url.Parser as UrlP exposing ((</>), (<?>))
 import Url.Parser.Query as UrlQ
@@ -770,9 +771,16 @@ view model =
                 |> List.filter
                     (\event ->
                         let
+                            eventStartDate =
+                                event.start
+                                    |> round
+                                    |> Time.millisToPosix
+                                    |> Date.fromPosix Time.utc
+                                    |> Date.format "yyyy-MM-dd"
+
                             startOk =
                                 String.isEmpty model.route.start
-                                    || (model.route.start <= String.fromFloat event.start)
+                                    || (model.route.start <= eventStartDate)
 
                             endOk =
                                 String.isEmpty model.route.end
@@ -781,7 +789,15 @@ view model =
                                                 True
 
                                             Just e ->
-                                                String.fromFloat e <= model.route.end
+                                                let
+                                                    eventEndDate =
+                                                        e
+                                                            |> round
+                                                            |> Time.millisToPosix
+                                                            |> Date.fromPosix Time.utc
+                                                            |> Date.format "yyyy-MM-dd"
+                                                in
+                                                eventEndDate <= model.route.end
                                        )
 
                             tagsOk =
@@ -1104,8 +1120,11 @@ viewEvent model event =
             not (Set.isEmpty (Set.intersect model.hover event.tags))
 
         eventDate =
-            -- TODO: Properly format timestamp to date string
-            String.fromFloat event.start
+            event.start
+                |> round
+                |> Time.millisToPosix
+                |> Date.fromPosix Time.utc
+                |> Date.format "yyyy-MM-dd"
     in
     H.div
         [ A.class "event-card"
