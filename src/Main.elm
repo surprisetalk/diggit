@@ -249,20 +249,6 @@ type RemoteData e a
     | Success a
 
 
-type JobDest
-    = Summary Filters
-    | ShortName Filters
-    | Suggestions Filters
-    | KeyEvent Filters
-
-
-type alias Job =
-    { dest : JobDest
-    , request : ClaudeRequest
-    , status : RemoteData Http.Error ClaudeResponse
-    }
-
-
 type alias Error =
     { message : String
     , timestamp : Time
@@ -279,7 +265,6 @@ type alias Model =
     , route : Filters
     , repo : Maybe Repo
     , claude : Claude
-    , jobs : Array Job
     , timezone : Time.Zone
     }
 
@@ -533,8 +518,6 @@ subs model =
         [ repoLoaded RepoLoaded
         , pageErrored PageErrored
         , progressReported ProgressReported
-
-        -- TODO: Time.every (1000) JobTick
         ]
 
 
