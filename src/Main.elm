@@ -848,7 +848,6 @@ viewAside model filteredEvents allTags tagFrequencies =
         , viewRepoSection model
         , viewFiltersSection model filteredEvents
         , viewTagsSection model tagFrequencies
-        , viewClaudeSection model
         ]
 
 
@@ -958,7 +957,7 @@ viewTagsSection model tagFrequencies =
                     [ text "Popular tags" ]
                 , H.div [ A.class "tag-filters" ]
                     (tagFrequencies
-                        |> List.take 1000
+                        |> List.take 100
                         |> List.map
                             (\( tag, count ) ->
                                 tagButton (tag ++ " (" ++ String.fromInt count ++ ")") (TagAdded tag)
@@ -977,66 +976,47 @@ tagButton label msg =
         [ text label ]
 
 
-viewClaudeSection : Model -> Html Msg
-viewClaudeSection model =
-    let
-        totalTokens =
-            model.claude.history
-                |> List.map .tokens
-                |> List.sum
-
-        totalPrice =
-            model.claude.history
-                |> List.map .price
-                |> List.sum
-    in
-    H.section [ A.class "claude-section section" ]
-        [ H.button
-            [ A.onClick ReportRequested
-            , A.class "btn btn-primary"
-            , A.style "padding" "10px 20px"
-            , A.style "font-size" "14px"
-            , S.marginBottomRem 1
-            , A.disabled (model.repo |> Maybe.andThen .report |> (/=) Nothing)
-            ]
-            [ text "Generate AI Report" ]
-        , H.div [ A.class "section-title" ]
-            [ text "Claude Settings" ]
-        , H.div [ A.class "form-row" ]
-            [ H.select
-                [ A.onInput
-                    (\s ->
-                        ClaudeModelChanged
-                            (case s of
-                                "opus41" ->
-                                    Opus41
-
-                                "haiku35" ->
-                                    Haiku35
-
-                                _ ->
-                                    Sonnet41
-                            )
-                    )
-                , A.class "select"
-                ]
-                [ H.option [ A.value "opus41", A.selected (model.claude.model == Opus41) ] [ text "Opus 4.1" ]
-                , H.option [ A.value "sonnet41", A.selected (model.claude.model == Sonnet41) ] [ text "Sonnet 4.1" ]
-                , H.option [ A.value "haiku35", A.selected (model.claude.model == Haiku35) ] [ text "Haiku 3.5" ]
-                ]
-            ]
-        , H.input
+viewClaudeForm : Model -> Html Msg
+viewClaudeForm model =
+    H.form [ A.class "claude-form", A.style "display" "flex", A.style "margin-bottom" "20px", A.style "display" "flex", A.style "gap" "10px", A.style "align-items" "center" ]
+        [ H.input
             [ A.type_ "password"
-            , A.placeholder "API Key"
+            , A.placeholder "Anthropic API Key"
             , A.value model.claude.auth
             , A.onInput ClaudeAuthChanged
-            , A.class "password-input"
+            , A.class "form-input"
+            , A.style "width" "200px"
+            , S.marginRightAuto
             ]
             []
-        , H.div [ A.class "claude-stats" ]
-            [ H.span [] [ text (commas (String.fromInt totalTokens) ++ " tokens") ]
-            , H.span [] [ text (usd totalPrice) ]
+        , H.select
+            [ A.onInput
+                (\s ->
+                    ClaudeModelChanged
+                        (case s of
+                            "opus41" ->
+                                Opus41
+
+                            "haiku35" ->
+                                Haiku35
+
+                            _ ->
+                                Sonnet41
+                        )
+                )
+            , A.class "select"
             ]
+            [ H.option [ A.value "opus41", A.selected (model.claude.model == Opus41) ] [ text "Opus 4.1" ]
+            , H.option [ A.value "sonnet41", A.selected (model.claude.model == Sonnet41) ] [ text "Sonnet 4.1" ]
+            , H.option [ A.value "haiku35", A.selected (model.claude.model == Haiku35) ] [ text "Haiku 3.5" ]
+            ]
+        , H.button
+            [ A.onClick ReportRequested
+            , A.class "btn btn-primary"
+            , A.type_ "button"
+            , A.disabled (model.repo |> Maybe.andThen .report |> (/=) Nothing)
+            ]
+            [ text "Generate Report" ]
         ]
 
 
@@ -1052,7 +1032,8 @@ viewMain model filteredEvents =
 
             Just repo ->
                 H.div [ S.displayFlex, S.flexDirectionColumn, S.width "100%" ]
-                    [ viewReportSection repo model
+                    [ viewClaudeForm model
+                    , viewReportSection repo model
                     , viewEventsSection filteredEvents model
                     , viewVisualization filteredEvents
                     ]
@@ -1102,14 +1083,14 @@ viewSuggestion suggestion =
 viewEventsSection : List Event -> Model -> Html Msg
 viewEventsSection events model =
     H.div [ A.class "events-section" ]
-        [ H.h3 []
-            [ text "Events" ]
-        , H.div [ A.class "events-list" ]
+        [ H.div [ A.class "events-list" ]
             (events
-                |> List.take 50
-                -- Limit to first 50 events for performance
+                |> List.take 1000
+                -- Limit to first 1000 events for performance
                 |> List.map (viewEvent model)
             )
+
+        -- TODO: If showing exactly 1000, then display a little message that says that 1000 events is maximum.
         ]
 
 
