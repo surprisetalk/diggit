@@ -739,7 +739,7 @@ buildUrl filters =
     -- TODO: Use Url.Builder instead.
     let
         base =
-            iif (String.isEmpty filters.repo) "/" filters.repo
+            "/" ++ iif (String.isEmpty filters.repo) "" filters.repo
 
         params =
             [ iif (String.isEmpty filters.start) Nothing (Just ("start=" ++ filters.start))
@@ -749,7 +749,7 @@ buildUrl filters =
                 |> List.filterMap identity
                 |> String.join "&"
     in
-    iif (String.isEmpty params) base (base ++ "?" ++ params)
+    base ++ iif (String.isEmpty params) "" ("?" ++ params)
 
 
 
@@ -939,17 +939,6 @@ viewTagsSection model tagFrequencies =
                                 [ text ("× " ++ tag) ]
                         )
                 )
-            ]
-        , H.div []
-            [ H.div [ A.class "section-title" ]
-                [ text "Add filters" ]
-            , H.div [ A.class "tag-filters" ]
-                [ tagButton "+ @user" (TagAdded "@user")
-                , tagButton "+ >branch" (TagAdded ">branch")
-                , tagButton "+ .ext" (TagAdded ".ext")
-                , tagButton "+ /path" (TagAdded "/path")
-                , tagButton "+ #tag" (TagAdded "#tag")
-                ]
             ]
         , iif (List.isEmpty tagFrequencies) (H.div [] []) <|
             H.div []

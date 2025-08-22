@@ -87,14 +87,13 @@
             for (const commit of commits) {
               const authorId = commit.commit.author.email;
 
-              if (!authors[authorId]) {
+              if (!authors[authorId])
                 authors[authorId] = {
                   id: authorId,
                   name: commit.commit.author.name,
                   email: commit.commit.author.email,
                   avatarUrl: null,
                 };
-              }
 
               commitData[commit.oid] = {
                 id: commit.oid,
@@ -103,7 +102,7 @@
                 end: null,
                 insertions: 0,
                 deletions: 0,
-                tags: ["commit", `@${commit.commit.author.name}`],
+                tags: ["commit", `@${commit.commit.author.name}`], // TODO: Add other tags, e.g. >branch, .ext, /dir, #tag, @author
                 summary: commit.commit.message,
               };
             }
@@ -127,11 +126,11 @@
               branchData[branch] = {
                 id: branchCommit,
                 url: `${url}/tree/${branch}`,
-                start: Date.now(),
+                start: Date.now(), // TODO:
                 end: null,
                 insertions: 0,
                 deletions: 0,
-                tags: ["branch", `>${branch}`],
+                tags: ["branch", `>${branch}`], // TODO: Add other tags, e.g. >branch, .ext, /dir, #tag, @author
                 summary: `Branch: ${branch}`,
               };
             }
