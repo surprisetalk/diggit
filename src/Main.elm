@@ -58,6 +58,15 @@ round2 =
     (*) 100 >> floor >> toFloat >> flip (/) 100
 
 
+formatEventDate : Float -> String
+formatEventDate time =
+    time
+        |> round
+        |> Time.millisToPosix
+        |> Date.fromPosix Time.utc
+        |> Date.format "yyyy-MM-dd"
+
+
 usd : Float -> String
 usd amount =
     let
@@ -192,12 +201,8 @@ type alias Repo =
     }
 
 
-type
-    ClaudeModel
-    -- TODO: We don't need this. Just use a string.
-    = Opus41
-    | Sonnet41
-    | Haiku35
+type alias ClaudeModel =
+    String
 
 
 type alias ClaudeRequest =
@@ -404,24 +409,6 @@ init flags url nav =
         filters =
             router url
 
-        initialClaude =
-            { auth = Maybe.withDefault "" flags.claudeAuth
-            , model =
-                case flags.claudeModel of
-                    Just "opus41" ->
-                        Opus41
-
-                    Just "sonnet41" ->
-                        Sonnet41
-
-                    Just "haiku35" ->
-                        Haiku35
-
-                    _ ->
-                        Sonnet41
-            , history = []
-            }
-
         model =
             { nav = nav
             , errors = []
@@ -431,13 +418,15 @@ init flags url nav =
             , form = filters
             , route = filters
             , repo = Nothing
-            , claude = initialClaude
+            , claude =
+                { auth = Maybe.withDefault "" flags.claudeAuth
+                , model = Maybe.withDefault "sonnet41" flags.claudeModel
+                , history = []
+                }
             , jobs = Array.empty
             }
     in
-    ( model
-    , requestRepo filters.repo
-    )
+    ( model, requestRepo filters.repo )
 
 
 defaultFilters : Filters
@@ -533,12 +522,8 @@ update msg ({ form, claude } as model) =
             ( model, Cmd.none )
 
         UrlChange url ->
-            let
-                filters =
-                    router url
-            in
-            ( { model | route = filters, form = { form | repo = filters.repo }, repo = iif (model.route.repo == filters.repo) model.repo Nothing }
-            , iif (model.route.repo == filters.repo) Cmd.none (requestRepo filters.repo)
+            ( { model | route = router url, form = { form | repo = (router url).repo }, repo = iif (model.route.repo == (router url).repo) model.repo Nothing }
+            , iif (model.route.repo == (router url).repo) Cmd.none (requestRepo (router url).repo)
             )
 
         LinkClick (Browser.Internal url) ->
@@ -556,58 +541,28 @@ update msg ({ form, claude } as model) =
             )
 
         StartChanged t ->
-            -- TODO : Get rid of let statement.
-            let
-                newForm =
-                    model.form
-                        |> (\f -> { f | start = t })
-            in
-            ( { model | form = newForm }
+            ( { model | form = { form | start = t } }
             , Nav.pushUrl model.nav (buildUrl model.route)
             )
 
         EndChanged t ->
-            -- TODO : Get rid of let statement.
-            let
-                newForm =
-                    model.form
-                        |> (\f -> { f | end = t })
-            in
-            ( { model | form = newForm }
+            ( { model | form = { form | end = t } }
             , Nav.pushUrl model.nav (buildUrl model.route)
             )
 
         TagAdded tag ->
-            -- TODO : Get rid of let statement.
-            let
-                newForm =
-                    model.form
-                        |> (\f -> { f | tags = Set.insert tag f.tags })
-            in
-            ( { model | form = newForm }
-            , Nav.pushUrl model.nav (buildUrl newForm)
+            ( { model | form = { form | tags = Set.insert tag form.tags } }
+            , Nav.pushUrl model.nav (buildUrl { form | tags = Set.insert tag form.tags })
             )
 
         TagExcluded tag ->
-            -- TODO : Get rid of let statement.
-            let
-                newForm =
-                    model.form
-                        |> (\f -> { f | tags = Set.insert ("-" ++ tag) f.tags })
-            in
-            ( { model | form = newForm }
-            , Nav.pushUrl model.nav (buildUrl newForm)
+            ( { model | form = { form | tags = Set.insert ("-" ++ tag) form.tags } }
+            , Nav.pushUrl model.nav (buildUrl { form | tags = Set.insert ("-" ++ tag) form.tags })
             )
 
         TagRemoved tag ->
-            -- TODO : Get rid of let statement.
-            let
-                newForm =
-                    model.form
-                        |> (\f -> { f | tags = Set.remove tag f.tags })
-            in
-            ( { model | form = newForm }
-            , Nav.pushUrl model.nav (buildUrl newForm)
+            ( { model | form = { form | tags = Set.remove tag form.tags } }
+            , Nav.pushUrl model.nav (buildUrl { form | tags = Set.remove tag form.tags })
             )
 
         ReportRequested ->
@@ -623,8 +578,8 @@ update msg ({ form, claude } as model) =
                         ]
                     )
 
-        ClaudeModelChanged mod ->
-            ( { model | claude = { claude | model = mod } }, Cmd.none )
+        ClaudeModelChanged model_ ->
+            ( { model | claude = { claude | model = model_ } }, Cmd.none )
 
         ClaudeAuthChanged auth ->
             ( { model | claude = { claude | auth = auth } }, Cmd.none )
@@ -648,41 +603,26 @@ update msg ({ form, claude } as model) =
                     , Cmd.none
                     )
 
-        GithubEventsFetched result ->
-            -- TODO: Use syntax like (GithubEventsFetched (Ok events)).
-            case result of
-                Ok events ->
-                    -- TODO: Update repo.github.events
-                    ( model, Cmd.none )
+        GithubEventsFetched (Ok events) ->
+            -- TODO: Update repo.github.events
+            ( model, Cmd.none )
 
-                Err err ->
-                    ( addError ("Failed to fetch GitHub events: " ++ httpErrorToString err) model
-                    , Cmd.none
-                    )
+        GithubEventsFetched (Err err) ->
+            ( addError ("Failed to fetch GitHub events: " ++ httpErrorToString err) model, Cmd.none )
 
-        GithubUsersFetched result ->
-            -- TODO: Use syntax like (GithubEventsFetched (Ok events)).
-            case result of
-                Ok users ->
-                    -- TODO: Update repo.github.users
-                    ( model, Cmd.none )
+        GithubUsersFetched (Ok users) ->
+            -- TODO: Update repo.github.users
+            ( model, Cmd.none )
 
-                Err err ->
-                    ( addError ("Failed to fetch GitHub users: " ++ httpErrorToString err) model
-                    , Cmd.none
-                    )
+        GithubUsersFetched (Err err) ->
+            ( addError ("Failed to fetch GitHub users: " ++ httpErrorToString err) model, Cmd.none )
 
-        GithubIssuesFetched result ->
-            -- TODO: Use syntax like (GithubEventsFetched (Ok events)).
-            case result of
-                Ok issues ->
-                    -- TODO: Update repo.github.issues
-                    ( model, Cmd.none )
+        GithubIssuesFetched (Ok issues) ->
+            -- TODO: Update repo.github.issues
+            ( model, Cmd.none )
 
-                Err err ->
-                    ( addError ("Failed to fetch GitHub issues: " ++ httpErrorToString err) model
-                    , Cmd.none
-                    )
+        GithubIssuesFetched (Err err) ->
+            ( addError ("Failed to fetch GitHub issues: " ++ httpErrorToString err) model, Cmd.none )
 
         JobTick time ->
             -- TODO: Start next job if none are processing
@@ -702,9 +642,7 @@ update msg ({ form, claude } as model) =
             ( { model | progress = Dict.insert message progress model.progress }, Cmd.none )
 
         RemoveError index ->
-            ( { model | errors = List.indexedMap (\i e -> iif (i == index) Nothing (Just e)) model.errors |> List.filterMap identity }
-            , Cmd.none
-            )
+            ( { model | errors = List.indexedMap (\i e -> iif (i == index) Nothing (Just e)) model.errors |> List.filterMap identity }, Cmd.none )
 
 
 addError : String -> Model -> Model
@@ -733,24 +671,21 @@ httpErrorToString error =
 
 buildUrl : Filters -> String
 buildUrl filters =
-    -- TODO: Use Url.Builder instead.
+    -- TODO: Use Url.Builder.
     let
         base =
             "/" ++ iif (String.isEmpty filters.repo) "" filters.repo
 
         params =
-            [ iif (String.isEmpty filters.start) Nothing (Just ("start=" ++ filters.start))
-            , iif (String.isEmpty filters.end) Nothing (Just ("end=" ++ filters.end))
-            , iif (Set.isEmpty filters.tags) Nothing (Just ("tags=" ++ String.join "," (Set.toList filters.tags)))
-            ]
-                |> List.filterMap identity
+            [ ( "start", filters.start ), ( "end", filters.end ), ( "tags", String.join "," (Set.toList filters.tags) ) ]
+                |> List.filter (\( _, v ) -> not (String.isEmpty v || (v == "")))
+                |> List.map (\( k, v ) -> k ++ "=" ++ v)
                 |> String.join "&"
     in
     base ++ iif (String.isEmpty params) "" ("?" ++ params)
 
 
 
---
 ---- VIEW ---------------------------------------------------------------------
 
 
@@ -763,7 +698,7 @@ view model =
         rows =
             H.div << (::) (A.class "flex flex-col")
 
-        cols attrs =
+        cols =
             H.div << (::) (A.class "flex flex-row")
 
         filteredEvents =
@@ -772,11 +707,7 @@ view model =
                     (\event ->
                         let
                             eventStartDate =
-                                event.start
-                                    |> round
-                                    |> Time.millisToPosix
-                                    |> Date.fromPosix Time.utc
-                                    |> Date.format "yyyy-MM-dd"
+                                formatEventDate event.start
 
                             startOk =
                                 String.isEmpty model.route.start
@@ -789,15 +720,7 @@ view model =
                                                 True
 
                                             Just e ->
-                                                let
-                                                    eventEndDate =
-                                                        e
-                                                            |> round
-                                                            |> Time.millisToPosix
-                                                            |> Date.fromPosix Time.utc
-                                                            |> Date.format "yyyy-MM-dd"
-                                                in
-                                                eventEndDate <= model.route.end
+                                                formatEventDate e <= model.route.end
                                        )
 
                             tagsOk =
@@ -951,17 +874,13 @@ viewTagsSection model tagFrequencies =
                         )
                 )
             ]
-        , iif (List.isEmpty tagFrequencies) (H.div [] []) <|
+        , iif (List.isEmpty tagFrequencies) (text "") <|
             H.div []
-                [ H.div [ A.class "section-title" ]
-                    [ text "Popular tags" ]
+                [ H.div [ A.class "section-title" ] [ text "Popular tags" ]
                 , H.div [ A.class "tag-filters" ]
                     (tagFrequencies
                         |> List.take 100
-                        |> List.map
-                            (\( tag, count ) ->
-                                tagButton (tag ++ " (" ++ String.fromInt count ++ ")") (TagAdded tag)
-                            )
+                        |> List.map (\( tag, count ) -> tagButton (tag ++ " (" ++ String.fromInt count ++ ")") (TagAdded tag))
                     )
                 ]
         ]
@@ -978,37 +897,24 @@ tagButton label msg =
 
 viewClaudeForm : Model -> Html Msg
 viewClaudeForm model =
-    H.form [ A.class "claude-form", A.style "display" "flex", A.style "margin-bottom" "20px", A.style "display" "flex", A.style "gap" "10px", A.style "align-items" "center" ]
+    H.form [ A.class "claude-form", S.displayFlex, S.marginBottomPx 20, S.gapPx 10, S.alignItemsCenter ]
         [ H.input
             [ A.type_ "password"
             , A.placeholder "Anthropic API Key"
             , A.value model.claude.auth
             , A.onInput ClaudeAuthChanged
             , A.class "form-input"
-            , A.style "width" "200px"
+            , S.widthPx 200
             , S.marginRightAuto
             ]
             []
         , H.select
-            [ A.onInput
-                (\s ->
-                    ClaudeModelChanged
-                        (case s of
-                            "opus41" ->
-                                Opus41
-
-                            "haiku35" ->
-                                Haiku35
-
-                            _ ->
-                                Sonnet41
-                        )
-                )
+            [ A.onInput ClaudeModelChanged
             , A.class "select"
             ]
-            [ H.option [ A.value "opus41", A.selected (model.claude.model == Opus41) ] [ text "Opus 4.1" ]
-            , H.option [ A.value "sonnet41", A.selected (model.claude.model == Sonnet41) ] [ text "Sonnet 4.1" ]
-            , H.option [ A.value "haiku35", A.selected (model.claude.model == Haiku35) ] [ text "Haiku 3.5" ]
+            [ H.option [ A.value "opus41", A.selected (model.claude.model == "opus41") ] [ text "Opus 4.1" ]
+            , H.option [ A.value "sonnet41", A.selected (model.claude.model == "sonnet41") ] [ text "Sonnet 4.1" ]
+            , H.option [ A.value "haiku35", A.selected (model.claude.model == "haiku35") ] [ text "Haiku 3.5" ]
             ]
         , H.button
             [ A.onClick ReportRequested
@@ -1067,7 +973,7 @@ viewReportSection repo model =
                         [ text (iif (String.isEmpty report.summary) "Generating summary..." report.summary)
                         ]
                     ]
-                , iif (List.isEmpty report.suggestions) (H.div [] []) <| H.div [ A.class "suggestions" ] (List.map viewSuggestion report.suggestions)
+                , iif (List.isEmpty report.suggestions) (text "") <| H.div [ A.class "suggestions" ] (List.map viewSuggestion report.suggestions)
                 ]
 
 
@@ -1101,15 +1007,11 @@ viewEvent model event =
             not (Set.isEmpty (Set.intersect model.hover event.tags))
 
         eventDate =
-            event.start
-                |> round
-                |> Time.millisToPosix
-                |> Date.fromPosix Time.utc
-                |> Date.format "yyyy-MM-dd"
+            formatEventDate event.start
     in
     H.div
         [ A.class "event-card"
-        , A.style "background-color" (iif isHovered "#1c2128" "#161b22")
+        , S.backgroundColor (iif isHovered "#1c2128" "#161b22")
         , A.onMouseEnter (Hovered event.tags)
         , A.onMouseLeave (Hovered Set.empty)
         ]
@@ -1123,9 +1025,9 @@ viewEvent model event =
             ]
         , H.div [ A.class "event-meta" ]
             [ H.span [] [ text eventDate ]
-            , iif (not (event.insertions > 0 || event.deletions > 0)) (H.span [] []) <|
-                H.span [ A.class "event-changes" ]
-                    [ text ("+" ++ String.fromInt event.insertions ++ " -" ++ String.fromInt event.deletions) ]
+            , iif (event.insertions > 0 || event.deletions > 0)
+                (H.span [ A.class "event-changes" ] [ text ("+" ++ String.fromInt event.insertions ++ " -" ++ String.fromInt event.deletions) ])
+                (text "")
             , H.div [ A.class "event-tags" ]
                 (event.tags
                     |> Set.toList
@@ -1138,9 +1040,9 @@ viewEvent model event =
                         )
                 )
             ]
-        , iif (String.isEmpty event.summary && String.length event.summary > 60) (H.div [] []) <|
-            H.p [ A.class "event-description" ]
-                [ text event.summary ]
+        , iif (not (String.isEmpty event.summary) && String.length event.summary > 60)
+            (H.p [ A.class "event-description" ] [ text event.summary ])
+            (text "")
         ]
 
 
@@ -1185,7 +1087,7 @@ viewProgressBar ( message, progress ) =
             [ A.class "progress-bar-container" ]
             [ H.div
                 [ A.class "progress-bar-fill"
-                , A.style "width" (String.fromFloat (progress * 100) ++ "%")
+                , S.width (String.fromFloat (progress * 100) ++ "%")
                 ]
                 []
             ]
