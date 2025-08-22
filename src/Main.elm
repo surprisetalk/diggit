@@ -425,7 +425,7 @@ init flags url nav =
             { nav = nav
             , errors = []
             , progress = Dict.empty
-            , repos = [ "elm/compiler", "sindresorhus/awesome", "automerge/automerge", "PRQL/prql", "charmbracelet/lipgloss", "munificent/vigil", "surprisetalk/blogs.hn" ]
+            , repos = [ "surprisetalk/diggit", "sindresorhus/awesome", "automerge/automerge", "PRQL/prql", "charmbracelet/lipgloss", "munificent/vigil", "surprisetalk/blogs.hn" ]
             , hover = Set.empty
             , form = filters
             , route = filters
@@ -865,7 +865,7 @@ viewHeader =
 
 viewRepoSection : Model -> Html Msg
 viewRepoSection model =
-    H.section [ A.class "section" ]
+    H.section []
         [ H.form [ A.onSubmit RepoUrlSubmitted, A.class "form" ]
             [ H.div [ A.class "form-row" ]
                 [ H.input
@@ -892,7 +892,7 @@ viewRepoSection model =
 
 viewFiltersSection : Model -> List Event -> Html Msg
 viewFiltersSection model filteredEvents =
-    H.section [ A.class "section" ]
+    H.section []
         [ -- TODO: Add histogram visualization here
           H.div [ A.class "filter-count" ]
             [ H.div [ A.class "filter-info" ]
@@ -921,7 +921,7 @@ viewFiltersSection model filteredEvents =
 
 viewTagsSection : Model -> List ( Tag, Int ) -> Html Msg
 viewTagsSection model tagFrequencies =
-    H.section [ A.class "section" ]
+    H.section []
         [ H.div []
             [ H.div [ A.class "section-title" ]
                 [ text "Active filters" ]
@@ -976,7 +976,15 @@ viewClaudeSection model =
                 |> List.sum
     in
     H.section [ A.class "claude-section section" ]
-        [ H.div [ A.class "section-title" ]
+        [ H.button
+            [ A.onClick ReportRequested
+            , A.class "btn btn-primary"
+            , A.style "padding" "10px 20px"
+            , A.style "font-size" "14px"
+            , S.marginBottomRem 1
+            ]
+            [ text "Generate AI Report" ]
+        , H.div [ A.class "section-title" ]
             [ text "Claude Settings" ]
         , H.div [ A.class "form-row" ]
             [ H.select
@@ -1051,15 +1059,7 @@ viewReportSection : Repo -> Model -> Html Msg
 viewReportSection repo model =
     case repo.report of
         Nothing ->
-            H.div [ A.class "report-section" ]
-                [ H.button
-                    [ A.onClick ReportRequested
-                    , A.class "btn btn-primary"
-                    , A.style "padding" "10px 20px"
-                    , A.style "font-size" "14px"
-                    ]
-                    [ text "Generate AI Report" ]
-                ]
+            text ""
 
         Just report ->
             H.div [ A.class "report-section" ]
