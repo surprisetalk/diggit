@@ -288,6 +288,18 @@ type alias Error =
     }
 
 
+type alias ApiPreviewOptions =
+    { date : Bool
+    , time : Bool
+    , ext : Bool
+    , dir : Bool
+    , branch : Bool
+    , author : Bool
+    , title : Bool
+    , description : Bool
+    }
+
+
 type alias Model =
     { nav : Nav.Key
     , errors : List Error
@@ -299,6 +311,7 @@ type alias Model =
     , repo : Maybe Repo
     , claude : Claude
     , timezone : Time.Zone
+    , apiPreviewOptions : ApiPreviewOptions
     }
 
 
@@ -667,6 +680,16 @@ init flags url nav =
                 , history = []
                 }
             , timezone = timezone
+            , apiPreviewOptions =
+                { date = True
+                , time = False
+                , ext = True
+                , dir = False
+                , branch = False
+                , author = True
+                , title = True
+                , description = False
+                }
             }
     in
     ( model, requestRepo filters.repo )
@@ -740,6 +763,7 @@ type Msg
     | ProgressReported { message : String, progress : Float }
     | RemoveError Int
     | GithubDataChanged E.Value
+    | ApiPreviewToggled String Bool
 
 
 
@@ -787,12 +811,12 @@ update msg ({ form, claude } as model) =
 
         StartChanged t ->
             ( { model | form = { form | start = t } }
-            , Nav.pushUrl model.nav (buildUrl model.route)
+            , Nav.pushUrl model.nav (buildUrl { form | start = t })
             )
 
         EndChanged t ->
             ( { model | form = { form | end = t } }
-            , Nav.pushUrl model.nav (buildUrl model.route)
+            , Nav.pushUrl model.nav (buildUrl { form | end = t })
             )
 
         QueryChanged q ->
@@ -823,13 +847,10 @@ update msg ({ form, claude } as model) =
                 Just repo ->
                     let
                         eventsText =
-                            formatEventsForApi model.timezone (allEvents model)
-
-                        summarizePrompt =
-                            "\n\nPlease provide a comprehensive summary of this repository's development activity in markdown format. Include key insights about development patterns, major contributors, and notable changes."
+                            formatEventsForApi model.timezone model.apiPreviewOptions (allEvents model)
 
                         fullPrompt =
-                            eventsText ++ summarizePrompt
+                            eventsText ++ "\n\n" ++ summarizerPrompt
 
                         httpRequest =
                             Http.request
@@ -1016,6 +1037,42 @@ update msg ({ form, claude } as model) =
 
                 Err _ ->
                     ( model, Cmd.none )
+
+        ApiPreviewToggled field value ->
+            let
+                opts =
+                    model.apiPreviewOptions
+
+                newOpts =
+                    case field of
+                        "date" ->
+                            { opts | date = value }
+
+                        "time" ->
+                            { opts | time = value }
+
+                        "ext" ->
+                            { opts | ext = value }
+
+                        "dir" ->
+                            { opts | dir = value }
+
+                        "branch" ->
+                            { opts | branch = value }
+
+                        "author" ->
+                            { opts | author = value }
+
+                        "title" ->
+                            { opts | title = value }
+
+                        "description" ->
+                            { opts | description = value }
+
+                        _ ->
+                            opts
+            in
+            ( { model | apiPreviewOptions = newOpts }, Cmd.none )
 
 
 addError : String -> Model -> Model
@@ -1328,6 +1385,8 @@ viewHistogram timezone events =
         H.div [] []
 
     else
+        -- TODO: Selecting/dragging should set start/end.
+        -- TODO: Hovering should have some effect to indicate that selecting/dragging is possible.
         H.div [ A.class "histogram-container", S.heightPx 120, S.marginTopPx 20, S.marginBottomPx 10 ]
             [ C.chart
                 [ CA.height 120
@@ -1428,6 +1487,24 @@ tagButton label msg =
         [ text label ]
 
 
+viewApiCheckbox : String -> String -> Bool -> Html Msg
+viewApiCheckbox field label checked =
+    H.label [ S.display "flex", S.alignItems "center", S.gap "5px", S.cursor "pointer" ]
+        [ H.input
+            [ A.type_ "checkbox"
+            , A.checked checked
+            , A.onCheck (ApiPreviewToggled field)
+            ]
+            []
+        , H.span [] [ text label ]
+        ]
+
+
+summarizerPrompt : String
+summarizerPrompt =
+    "Please provide a comprehensive summary of this repository's development activity in markdown format with links where possible. Include key insights about development patterns, major contributors, and notable changes. Use markdown features like links to commits/issues/PRs, headings, lists, and code blocks to make the output well-structured and navigable."
+
+
 viewClaudeAside : Model -> List Event -> Html Msg
 viewClaudeAside model filteredEvents =
     let
@@ -1439,7 +1516,7 @@ viewClaudeAside model filteredEvents =
             case reportStatus of
                 Nothing ->
                     H.pre [ A.class "api-preview" ]
-                        [ text (formatEventsForApi model.timezone filteredEvents ++ "\n\nPlease provide a comprehensive summary of this repository's development activity in markdown format. Include key insights about development patterns, major contributors, and notable changes.") ]
+                        [ text (formatEventsForApi model.timezone model.apiPreviewOptions filteredEvents ++ "\n\n" ++ summarizerPrompt) ]
 
                 Just report ->
                     if String.isEmpty report.summary then
@@ -1483,21 +1560,121 @@ viewClaudeAside model filteredEvents =
             ]
         , H.section []
             [ H.h3 [] [ text "API Preview" ]
+            , H.div [ A.class "api-preview-options", S.padding "10px", S.display "flex", S.flexWrap "wrap", S.gap "10px" ]
+                [ viewApiCheckbox "date" "Date" model.apiPreviewOptions.date
+                , viewApiCheckbox "time" "Time" model.apiPreviewOptions.time
+                , viewApiCheckbox "ext" "Ext" model.apiPreviewOptions.ext
+                , viewApiCheckbox "dir" "Dir" model.apiPreviewOptions.dir
+                , viewApiCheckbox "branch" "Branch" model.apiPreviewOptions.branch
+                , viewApiCheckbox "author" "Author" model.apiPreviewOptions.author
+                , viewApiCheckbox "title" "Title" model.apiPreviewOptions.title
+                , viewApiCheckbox "description" "Description" model.apiPreviewOptions.description
+                ]
             , apiPreviewContent
             ]
         ]
 
 
-formatEventsForApi : Time.Zone -> List Event -> String
-formatEventsForApi timezone events =
+formatEventsForApi : Time.Zone -> ApiPreviewOptions -> List Event -> String
+formatEventsForApi timezone options events =
     events
         |> List.map
             (\event ->
-                String.join " "
-                    [ formatEventDate timezone event.start
-                    , Set.toList event.tags |> String.join " "
-                    , String.replace "\n" " " event.summary
-                    ]
+                let
+                    dateTime =
+                        formatEventDate timezone event.start
+
+                    datePart =
+                        String.left 10 dateTime
+
+                    timePart =
+                        String.dropLeft 11 dateTime
+
+                    parts =
+                        List.filterMap identity
+                            [ if options.date then
+                                Just datePart
+
+                              else
+                                Nothing
+                            , if options.time then
+                                Just timePart
+
+                              else
+                                Nothing
+                            , if options.ext then
+                                event.tags
+                                    |> Set.toList
+                                    |> List.filter (String.startsWith ".")
+                                    |> String.join " "
+                                    |> (\s ->
+                                            if String.isEmpty s then
+                                                Nothing
+
+                                            else
+                                                Just s
+                                       )
+
+                              else
+                                Nothing
+                            , if options.dir then
+                                event.tags
+                                    |> Set.toList
+                                    |> List.filter (String.startsWith "/")
+                                    |> String.join " "
+                                    |> (\s ->
+                                            if String.isEmpty s then
+                                                Nothing
+
+                                            else
+                                                Just s
+                                       )
+
+                              else
+                                Nothing
+                            , if options.branch then
+                                event.tags
+                                    |> Set.toList
+                                    |> List.filter (String.startsWith ">")
+                                    |> String.join " "
+                                    |> (\s ->
+                                            if String.isEmpty s then
+                                                Nothing
+
+                                            else
+                                                Just s
+                                       )
+
+                              else
+                                Nothing
+                            , if options.author then
+                                event.tags
+                                    |> Set.toList
+                                    |> List.filter (String.startsWith "@")
+                                    |> String.join " "
+                                    |> (\s ->
+                                            if String.isEmpty s then
+                                                Nothing
+
+                                            else
+                                                Just s
+                                       )
+
+                              else
+                                Nothing
+                            , if options.title then
+                                event.summary |> String.split "\n" |> List.head
+
+                              else
+                                Nothing
+                            , if options.description then
+                                event.summary |> String.split "\n" |> List.tail |> Maybe.map (String.join " ")
+
+                              else
+                                Nothing
+                            ]
+                in
+                String.join " " parts
             )
         |> String.join "\n"
 
