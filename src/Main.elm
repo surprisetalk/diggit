@@ -47,6 +47,11 @@ iif c a b =
         b
 
 
+day : number
+day =
+    24 * 60 * 60 * 1000
+
+
 formatEventDate : Time.Zone -> Time.Posix -> String
 formatEventDate timezone posix =
     let
@@ -347,23 +352,9 @@ githubDecoder : D.Decoder Github
 githubDecoder =
     D.map3 Github
         (D.maybe
-            (D.field "issues"
-                (D.dict eventDecoder
-                    |> D.map
-                        (Dict.foldl
-                            (\k v acc ->
-                                case String.toInt k of
-                                    Just intKey ->
-                                        Dict.insert intKey v acc
-
-                                    Nothing ->
-                                        acc
-                            )
-                            Dict.empty
-                        )
-                )
-            )
+            (D.field "issues" (D.dict eventDecoder))
             |> D.map (Maybe.withDefault Dict.empty)
+            |> D.map (Dict.foldl (\k v acc -> String.toInt k |> Maybe.map (\intKey -> Dict.insert intKey v acc) |> Maybe.withDefault acc) Dict.empty)
         )
         (D.maybe (D.field "events" (D.dict eventDecoder)) |> D.map (Maybe.withDefault Dict.empty))
         (D.maybe (D.field "users" (D.dict githubUserDecoder)) |> D.map (Maybe.withDefault Dict.empty))
@@ -414,7 +405,7 @@ githubEventsDecoder =
                 , insertions = 0
                 , deletions = 0
                 , tags = Set.fromList [ "github", eventType, "@" ++ actor ]
-                , summary = formatGithubEventSummary eventType payload
+                , summary = eventType
                 }
             )
             (D.field "id" D.string)
@@ -463,48 +454,13 @@ githubIssuesDecoder =
         |> D.map Dict.fromList
 
 
-formatGithubEventSummary : String -> D.Value -> String
-formatGithubEventSummary eventType payload =
-    case eventType of
-        "PushEvent" ->
-            "Pushed commits"
-
-        "CreateEvent" ->
-            "Created branch or tag"
-
-        "DeleteEvent" ->
-            "Deleted branch or tag"
-
-        "IssuesEvent" ->
-            "Issue activity"
-
-        "PullRequestEvent" ->
-            "Pull request activity"
-
-        "WatchEvent" ->
-            "Starred repository"
-
-        "ForkEvent" ->
-            "Forked repository"
-
-        _ ->
-            eventType
-
-
 encodeEvent : Event -> E.Value
 encodeEvent event =
     E.object
         [ ( "id", E.string event.id )
         , ( "url", E.string event.url )
         , ( "start", E.float (Time.posixToMillis event.start |> toFloat) )
-        , ( "end"
-          , case event.end of
-                Just endTime ->
-                    E.float (Time.posixToMillis endTime |> toFloat)
-
-                Nothing ->
-                    E.null
-          )
+        , ( "end", event.end |> Maybe.map (\endTime -> E.float (Time.posixToMillis endTime |> toFloat)) |> Maybe.withDefault E.null )
         , ( "insertions", E.int event.insertions )
         , ( "deletions", E.int event.deletions )
         , ( "tags", E.list E.string (Set.toList event.tags) )
@@ -517,14 +473,7 @@ encodeGithubUser user =
     E.object
         [ ( "id", E.string user.id )
         , ( "login", E.string user.login )
-        , ( "name"
-          , case user.name of
-                Just name ->
-                    E.string name
-
-                Nothing ->
-                    E.null
-          )
+        , ( "name", Maybe.withDefault E.null <| Maybe.map E.string user.name )
         , ( "avatar_url", E.string user.avatarUrl )
         , ( "html_url", E.string user.htmlUrl )
         ]
@@ -597,7 +546,6 @@ defaultFilters =
 router : Url -> Filters
 router =
     let
-        -- e.g. /repo/ziglang/zig?start=20240401&end=20250401&tags=\>main,@sally&q=TODO#202404
         routeParser : UrlP.Parser (Filters -> a) a
         routeParser =
             (UrlP.top
@@ -739,31 +687,21 @@ update msg ({ form, claude } as model) =
                     ( model, Cmd.none )
 
                 Just repo ->
-                    let
-                        eventsText =
-                            formatEventsForApi model.timezone model.apiPreviewOptions (allEvents model)
-
-                        fullPrompt =
-                            eventsText ++ "\n\n" ++ summarizerPrompt
-
-                        httpRequest =
-                            Http.request
-                                { method = "POST"
-                                , headers =
-                                    [ Http.header "x-api-key" model.claude.auth
-                                    , Http.header "anthropic-version" "2023-06-01"
-                                    , Http.header "content-type" "application/json"
-                                    , Http.header "anthropic-dangerous-direct-browser-access" "true"
-                                    ]
-                                , url = "https://api.anthropic.com/v1/messages"
-                                , body = Http.jsonBody (encodeClaudeRequest model.claude.model fullPrompt)
-                                , expect = Http.expectString ClaudeResponseReceived
-                                , timeout = Just 60000
-                                , tracker = Nothing
-                                }
-                    in
                     ( { model | repo = Just { repo | report = Just { summary = "", suggestions = [], events = [] } } }
-                    , httpRequest
+                    , Http.request
+                        { method = "POST"
+                        , headers =
+                            [ Http.header "x-api-key" model.claude.auth
+                            , Http.header "anthropic-version" "2023-06-01"
+                            , Http.header "content-type" "application/json"
+                            , Http.header "anthropic-dangerous-direct-browser-access" "true"
+                            ]
+                        , url = "https://api.anthropic.com/v1/messages"
+                        , body = Http.jsonBody (encodeClaudeRequest model.claude.model (formatEventsForApi model.timezone model.apiPreviewOptions (allEvents model) ++ "\n\n" ++ summarizerPrompt))
+                        , expect = Http.expectString ClaudeResponseReceived
+                        , timeout = Just 60000
+                        , tracker = Nothing
+                        }
                     )
 
         ClaudeModelChanged model_ ->
@@ -801,13 +739,6 @@ update msg ({ form, claude } as model) =
             case D.decodeValue repoDecoder value of
                 Ok repo ->
                     let
-                        latestEventTime =
-                            repo.github.events
-                                |> Dict.values
-                                |> List.map (.start >> Time.posixToMillis)
-                                |> List.maximum
-                                |> Maybe.map Time.millisToPosix
-
                         latestIssueTime =
                             repo.github.issues
                                 |> Dict.values
@@ -830,24 +761,14 @@ update msg ({ form, claude } as model) =
         GithubEventsFetched page maybeSince (Ok events) ->
             case model.repo of
                 Just repo ->
-                    let
-                        newEvents =
-                            events |> List.map (\event -> ( event.id, event )) |> Dict.fromList
-
-                        githubData =
-                            E.object
-                                [ ( "events", E.dict identity encodeEvent newEvents )
-                                ]
-                    in
                     ( model
                     , Cmd.batch
-                        [ saveGithubData { repo = repo.url, data = githubData }
+                        [ saveGithubData
+                            { repo = repo.url
+                            , data = E.object [ ( "events", E.dict identity encodeEvent <| Dict.fromList <| List.map (\event -> ( event.id, event )) <| events ) ]
+                            }
                         , collectGithubUsers events |> fetchGithubUsers
-                        , if List.length events > 0 then
-                            fetchGithubEvents (page + 1) maybeSince repo.url
-
-                          else
-                            Cmd.none
+                        , iif (List.length events <= 0) Cmd.none (fetchGithubEvents (page + 1) maybeSince repo.url)
                         ]
                     )
 
@@ -860,20 +781,13 @@ update msg ({ form, claude } as model) =
         GithubIssuesFetched page maybeSince (Ok issues) ->
             case model.repo of
                 Just repo ->
-                    let
-                        githubData =
-                            E.object
-                                [ ( "issues", E.dict String.fromInt encodeEvent issues )
-                                ]
-                    in
                     ( model
                     , Cmd.batch
-                        [ saveGithubData { repo = repo.url, data = githubData }
-                        , if Dict.size issues > 0 then
-                            fetchGithubIssues (page + 1) maybeSince repo.url
-
-                          else
-                            Cmd.none
+                        [ saveGithubData
+                            { repo = repo.url
+                            , data = E.object [ ( "issues", E.dict String.fromInt encodeEvent issues ) ]
+                            }
+                        , iif (Dict.size issues <= 0) Cmd.none (fetchGithubIssues (page + 1) maybeSince repo.url)
                         ]
                     )
 
@@ -886,16 +800,12 @@ update msg ({ form, claude } as model) =
         GithubUsersFetched (Ok users) ->
             case model.repo of
                 Just repo ->
-                    let
-                        newUsers =
-                            users |> List.map (\user -> ( user.id, user )) |> Dict.fromList
-
-                        githubData =
-                            E.object
-                                [ ( "users", E.dict identity encodeGithubUser newUsers )
-                                ]
-                    in
-                    ( model, saveGithubData { repo = repo.url, data = githubData } )
+                    ( model
+                    , saveGithubData
+                        { repo = repo.url
+                        , data = E.object [ ( "users", E.dict identity encodeGithubUser <| Dict.fromList <| List.map (\user -> ( user.id, user )) <| users ) ]
+                        }
+                    )
 
                 Nothing ->
                     ( model, Cmd.none )
@@ -920,11 +830,7 @@ update msg ({ form, claude } as model) =
                 Ok { repo, data } ->
                     case model.repo of
                         Just currentRepo ->
-                            if currentRepo.url == repo then
-                                ( { model | repo = Just { currentRepo | github = data } }, Cmd.none )
-
-                            else
-                                ( model, Cmd.none )
+                            ( iif (currentRepo.url /= repo) model { model | repo = Just { currentRepo | github = data } }, Cmd.none )
 
                         Nothing ->
                             ( model, Cmd.none )
@@ -1057,16 +963,20 @@ extractRepoFromUrl url =
            )
 
 
+githubHeaders : List Http.Header
+githubHeaders =
+    [ Http.header "Accept" "application/vnd.github.v3+json"
+    , Http.header "User-Agent" "diggit-app"
+    ]
+
+
 fetchGithubEvents : Int -> Maybe Time.Posix -> String -> Cmd Msg
 fetchGithubEvents page maybeSince repoUrl =
     case extractRepoFromUrl repoUrl of
         Just ( owner, repoName ) ->
             Http.request
                 { method = "GET"
-                , headers =
-                    [ Http.header "Accept" "application/vnd.github.v3+json"
-                    , Http.header "User-Agent" "diggit-app"
-                    ]
+                , headers = githubHeaders
                 , url = "https://api.github.com/repos/" ++ owner ++ "/" ++ repoName ++ "/events?per_page=100&page=" ++ String.fromInt page
                 , body = Http.emptyBody
                 , expect = Http.expectJson (GithubEventsFetched page maybeSince) githubEventsDecoder
@@ -1082,28 +992,10 @@ fetchGithubIssues : Int -> Maybe Time.Posix -> String -> Cmd Msg
 fetchGithubIssues page maybeSince repoUrl =
     case extractRepoFromUrl repoUrl of
         Just ( owner, repoName ) ->
-            let
-                sinceParam =
-                    case maybeSince of
-                        Just posix ->
-                            "&since=" ++ Iso8601.fromTime posix
-
-                        Nothing ->
-                            ""
-
-                baseUrl =
-                    "https://api.github.com/repos/" ++ owner ++ "/" ++ repoName ++ "/issues?state=all&per_page=100&direction=asc&page=" ++ String.fromInt page
-
-                urlWithSince =
-                    baseUrl ++ sinceParam
-            in
             Http.request
                 { method = "GET"
-                , headers =
-                    [ Http.header "Accept" "application/vnd.github.v3+json"
-                    , Http.header "User-Agent" "diggit-app"
-                    ]
-                , url = urlWithSince
+                , headers = githubHeaders
+                , url = "https://api.github.com/repos/" ++ owner ++ "/" ++ repoName ++ "/issues?state=all&per_page=100&direction=asc&page=" ++ String.fromInt page ++ (maybeSince |> Maybe.map (\posix -> "&since=" ++ Iso8601.fromTime posix) |> Maybe.withDefault "")
                 , body = Http.emptyBody
                 , expect = Http.expectJson (GithubIssuesFetched page maybeSince) githubIssuesDecoder
                 , timeout = Just 30000
@@ -1123,12 +1015,8 @@ fetchGithubUsers userLogins =
         login :: _ ->
             Http.request
                 { method = "GET"
-                , headers =
-                    [ Http.header "Accept" "application/vnd.github.v3+json"
-                    , Http.header "User-Agent" "diggit-app"
-                    ]
-                , url =
-                    "https://api.github.com/users/" ++ login
+                , headers = githubHeaders
+                , url = "https://api.github.com/users/" ++ login
                 , body = Http.emptyBody
                 , expect = Http.expectJson GithubUsersFetched (githubUserDecoder |> D.map List.singleton)
                 , timeout = Just 30000
@@ -1140,15 +1028,8 @@ collectGithubUsers : List Event -> List String
 collectGithubUsers events =
     events
         |> List.concatMap (.tags >> Set.toList)
-        |> List.filterMap
-            (\tag ->
-                if String.startsWith "@" tag then
-                    Just (String.dropLeft 1 tag)
-
-                else
-                    Nothing
-            )
-        |> List.take 10
+        |> List.filterMap (\tag -> iif (String.startsWith "@" tag) (Just (String.dropLeft 1 tag)) Nothing)
+        |> List.take 100
 
 
 
@@ -1162,33 +1043,12 @@ view model =
             allEvents model
                 |> List.filter
                     (\event ->
-                        let
-                            eventStartDate =
-                                formatEventDate model.timezone event.start
-
-                            startOk =
-                                String.isEmpty model.route.start
-                                    || (model.route.start <= eventStartDate)
-
-                            endOk =
-                                String.isEmpty model.route.end
-                                    || (case event.end of
-                                            Nothing ->
-                                                True
-
-                                            Just e ->
-                                                formatEventDate model.timezone e <= model.route.end
-                                       )
-
-                            tagsOk =
-                                Set.isEmpty model.route.tags
-                                    || Set.isEmpty (Set.diff model.route.tags event.tags)
-
-                            queryOk =
-                                String.isEmpty model.route.query
-                                    || String.contains (String.toLower model.route.query) (String.toLower event.summary)
-                        in
-                        startOk && endOk && tagsOk && queryOk
+                        List.all identity
+                            [ String.isEmpty model.route.start || (model.route.start <= formatEventDate model.timezone event.start)
+                            , String.isEmpty model.route.end || (event.end |> Maybe.map (\e -> formatEventDate model.timezone e <= model.route.end) |> Maybe.withDefault True)
+                            , Set.isEmpty model.route.tags || Set.isEmpty (Set.diff model.route.tags event.tags)
+                            , String.isEmpty model.route.query || String.contains (String.toLower model.route.query) (String.toLower event.summary)
+                            ]
                     )
 
         allTags =
@@ -1294,7 +1154,7 @@ viewHistogram timezone events =
                     ]
                   <|
                     Dict.toList <|
-                        List.foldl (\event -> Dict.update (Time.posixToMillis event.start // (30 * 24 * 60 * 60 * 1000) * 30 * 24 * 60 * 60 * 1000) (Maybe.withDefault 1 >> (+) 1 >> Just)) Dict.empty <|
+                        List.foldl (\event -> Dict.update (Time.posixToMillis event.start // (30 * day) * 30 * day) (Maybe.withDefault 1 >> (+) 1 >> Just)) Dict.empty <|
                             events
                 , C.xLabels
                     [ CA.noGrid
@@ -1476,101 +1336,51 @@ formatEventsForApi timezone options events =
         |> List.map
             (\event ->
                 let
+                    mif : Bool -> Maybe a -> Maybe a
+                    mif a b =
+                        iif a b Nothing
+
                     dateTime =
                         formatEventDate timezone event.start
-
-                    datePart =
-                        String.left 10 dateTime
-
-                    timePart =
-                        String.dropLeft 11 dateTime
-
-                    parts =
-                        List.filterMap identity
-                            [ if options.date then
-                                Just datePart
-
-                              else
-                                Nothing
-                            , if options.time then
-                                Just timePart
-
-                              else
-                                Nothing
-                            , if options.ext then
-                                event.tags
-                                    |> Set.toList
-                                    |> List.filter (String.startsWith ".")
-                                    |> String.join " "
-                                    |> (\s ->
-                                            if String.isEmpty s then
-                                                Nothing
-
-                                            else
-                                                Just s
-                                       )
-
-                              else
-                                Nothing
-                            , if options.dir then
-                                event.tags
-                                    |> Set.toList
-                                    |> List.filter (String.startsWith "/")
-                                    |> String.join " "
-                                    |> (\s ->
-                                            if String.isEmpty s then
-                                                Nothing
-
-                                            else
-                                                Just s
-                                       )
-
-                              else
-                                Nothing
-                            , if options.branch then
-                                event.tags
-                                    |> Set.toList
-                                    |> List.filter (String.startsWith ">")
-                                    |> String.join " "
-                                    |> (\s ->
-                                            if String.isEmpty s then
-                                                Nothing
-
-                                            else
-                                                Just s
-                                       )
-
-                              else
-                                Nothing
-                            , if options.author then
-                                event.tags
-                                    |> Set.toList
-                                    |> List.filter (String.startsWith "@")
-                                    |> String.join " "
-                                    |> (\s ->
-                                            if String.isEmpty s then
-                                                Nothing
-
-                                            else
-                                                Just s
-                                       )
-
-                              else
-                                Nothing
-                            , if options.title then
-                                event.summary |> String.split "\n" |> List.head
-
-                              else
-                                Nothing
-                            , if options.description then
-                                event.summary |> String.split "\n" |> List.tail |> Maybe.map (String.join " ")
-
-                              else
-                                Nothing
-                            ]
                 in
-                String.join " " parts
+                List.filterMap identity
+                    [ mif options.date (Just (String.left 10 dateTime))
+                    , mif options.time (Just (String.dropLeft 11 dateTime))
+                    , mif options.title
+                        (event.summary |> String.split "\n" |> List.head)
+                    , mif options.description
+                        (event.summary |> String.split "\n" |> List.tail |> Maybe.map (String.join " "))
+                    , mif options.ext
+                        (event.tags
+                            |> Set.filter (String.startsWith ".")
+                            |> Set.toList
+                            |> String.join " "
+                            |> (\s -> mif (s /= "") (Just s))
+                        )
+                    , mif options.dir
+                        (event.tags
+                            |> Set.filter (String.startsWith "/")
+                            |> Set.toList
+                            |> String.join " "
+                            |> (\s -> mif (s /= "") (Just s))
+                        )
+                    , mif options.branch
+                        (event.tags
+                            |> Set.filter (String.startsWith ">")
+                            |> Set.toList
+                            |> String.join " "
+                            |> (\s -> mif (s /= "") (Just s))
+                        )
+                    , mif options.author
+                        (event.tags
+                            |> Set.filter (String.startsWith "@")
+                            |> Set.toList
+                            |> String.join " "
+                            |> (\s -> mif (s /= "") (Just s))
+                        )
+                    ]
             )
+        |> List.map (String.join " ")
         |> String.join "\n"
 
 
@@ -1645,13 +1455,7 @@ viewEvent model event =
             , H.div [ A.class "event-tags" ]
                 (event.tags
                     |> Set.toList
-                    |> List.map
-                        (\tag ->
-                            H.span
-                                [ A.class "tag"
-                                ]
-                                [ text tag ]
-                        )
+                    |> List.map (\tag -> H.span [ A.class "tag" ] [ text tag ])
                 )
             ]
         , iif (not (String.isEmpty event.summary) && String.length event.summary > 60)
