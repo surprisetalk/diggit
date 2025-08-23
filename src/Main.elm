@@ -1136,22 +1136,20 @@ view model =
 
                 -- Repository loading section
                 , H.section []
-                    [ H.form [ A.onSubmit RepoUrlSubmitted, A.class "form" ]
-                        [ H.div [ A.class "form-row" ]
-                            [ H.input
-                                [ A.type_ "text"
-                                , A.placeholder "owner/repo"
-                                , A.value model.form.repo
-                                , A.onInput RepoUrlChanged
-                                , A.class "input"
-                                ]
-                                []
-                            , H.button
-                                [ A.type_ "submit"
-                                , A.class "primary-btn"
-                                ]
-                                [ text "Load" ]
+                    [ H.form [ A.onSubmit RepoUrlSubmitted, A.class "form form-row" ]
+                        [ H.input
+                            [ A.type_ "text"
+                            , A.placeholder "owner/repo"
+                            , A.value model.form.repo
+                            , A.onInput RepoUrlChanged
+                            , A.class "input"
                             ]
+                            []
+                        , H.button
+                            [ A.type_ "submit"
+                            , A.class "primary-btn"
+                            ]
+                            [ text "Load" ]
                         ]
                     , H.div [ A.class "repo-list" ]
                         (List.map (\repo -> H.a [ A.href ("/" ++ repo) ] [ text repo ])
@@ -1161,10 +1159,8 @@ view model =
 
                 -- Event filtering and visualization section
                 , H.section []
-                    [ H.div [ A.class "filter-count" ]
-                        [ H.div [ A.class "filter-info" ]
-                            [ text ("Showing " ++ String.fromInt (List.length filteredEvents) ++ " events") ]
-                        ]
+                    [ H.div [ A.class "filter-count filter-info" ]
+                        [ text ("Showing " ++ String.fromInt (List.length filteredEvents) ++ " events") ]
                     , H.div [ A.class "form-row" ]
                         [ H.input
                             [ A.type_ "text"
@@ -1178,7 +1174,7 @@ view model =
 
                     -- Event histogram chart
                     , if List.isEmpty filteredEvents then
-                        H.div [] []
+                        text ""
 
                       else
                         -- TODO: Selecting/dragging should set start/end.
@@ -1229,21 +1225,19 @@ view model =
 
                 -- Tag filtering section
                 , H.section []
-                    [ H.div []
-                        [ H.div [ A.class "section-title" ]
-                            [ text "Active filters" ]
-                        , H.div [ A.class "tag-filters" ]
-                            (Set.toList model.form.tags
-                                |> List.map
-                                    (\tag ->
-                                        H.button
-                                            [ A.onClick (TagRemoved tag)
-                                            , A.class (iif (String.startsWith "-" tag) "exclude-tag-btn" "active-tag-btn")
-                                            ]
-                                            [ text ("× " ++ tag) ]
-                                    )
-                            )
-                        ]
+                    [ H.div [ A.class "section-title" ]
+                        [ text "Active filters" ]
+                    , H.div [ A.class "tag-filters" ]
+                        (Set.toList model.form.tags
+                            |> List.map
+                                (\tag ->
+                                    H.button
+                                        [ A.onClick (TagRemoved tag)
+                                        , A.class (iif (String.startsWith "-" tag) "exclude-tag-btn" "active-tag-btn")
+                                        ]
+                                        [ text ("× " ++ tag) ]
+                                )
+                        )
                     , iif (List.isEmpty filteredTagFrequencies) (text "") <|
                         H.div []
                             [ H.div [ A.class "section-title" ] [ text "Popular tags" ]
@@ -1354,9 +1348,7 @@ view model =
                         Just report ->
                             if String.isEmpty report.summary then
                                 H.div [ A.class "api-preview" ]
-                                    [ H.p [ S.padding "20px", S.textAlign "center" ]
-                                        [ text "Generating summary..." ]
-                                    ]
+                                    [ H.p [ S.padding "20px", S.textAlign "center" ] [ text "Generating summary..." ] ]
 
                             else
                                 H.div [ A.class "api-preview", S.padding "20px" ]
@@ -1409,7 +1401,7 @@ viewEvent model event =
         , A.onMouseLeave (Hovered Set.empty)
         ]
         [ H.div [ A.class "event-header" ]
-            [ H.a [ A.href event.url, A.target "_blank", A.class "event-link" ]
+            [ H.a [ A.href event.url, A.target "_blank", A.class "event-header event-link" ]
                 [ text (String.left 60 event.summary) ]
             ]
         , H.div [ A.class "event-meta" ]
