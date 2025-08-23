@@ -512,7 +512,7 @@ init flags url nav =
             { nav = nav
             , errors = []
             , progress = Dict.empty
-            , repos = [ "surprisetalk/diggit", "sindresorhus/awesome", "automerge/automerge", "PRQL/prql", "charmbracelet/lipgloss", "munificent/vigil", "surprisetalk/blogs.hn", "tekknolagi/scrapscript" ]
+            , repos = [ "surprisetalk/diggit", "sindresorhus/awesome", "charmbracelet/lipgloss", "janderland/fql", "munificent/vigil", "surprisetalk/blogs.hn", "tekknolagi/scrapscript" ]
             , hover = Set.empty
             , form = filters
             , route = filters
@@ -535,7 +535,12 @@ init flags url nav =
                 }
             }
     in
-    ( model, requestRepo filters.repo )
+    ( model
+    , Cmd.batch
+        [ requestRepo filters.repo
+        , iif (filters.repo == "") (Nav.pushUrl model.nav "/surprisetalk/diggit") Cmd.none
+        ]
+    )
 
 
 defaultFilters : Filters
@@ -1300,13 +1305,14 @@ view model =
                 [ -- Claude AI configuration section
                   H.section []
                     [ H.h3 [] [ text "Claude Settings" ]
-                    , H.div [ A.class "claude-form" ]
+                    , H.form [ A.class "claude-form", A.onSubmit ReportRequested ]
                         [ H.input
                             [ A.type_ "password"
                             , A.placeholder "Anthropic API Key"
                             , A.value model.claude.auth
                             , A.onInput ClaudeAuthChanged
                             , A.class "input"
+                            , A.required True
                             ]
                             []
                         , H.select
@@ -1318,20 +1324,19 @@ view model =
                             , H.option [ A.value "haiku35", A.selected (model.claude.model == "haiku35") ] [ text "Haiku 3.5" ]
                             ]
                         , H.button
-                            [ A.onClick ReportRequested
-                            , A.class "primary-btn"
-                            , A.type_ "button"
+                            [ A.class "primary-btn"
+                            , A.type_ "submit"
                             , A.disabled (Maybe.andThen .report model.repo /= Nothing)
                             ]
                             [ text "Generate Report" ]
                         ]
                     ]
 
-                -- API preview configuration and output section
+                -- Prompt preview configuration and output section
                 , H.section [] <|
                     case Maybe.andThen .report model.repo of
                         Nothing ->
-                            [ H.h3 [] [ text "API Preview" ]
+                            [ H.h3 [] [ text "Prompt Preview" ]
                             , H.div [ A.class "api-preview-options", S.display "flex", S.flexWrap "wrap", S.gap "10px", S.fontSizePx 12 ]
                                 [ viewApiCheckbox "date" "Date" model.apiPreviewOptions.date
                                 , viewApiCheckbox "time" "Time" model.apiPreviewOptions.time
