@@ -348,8 +348,7 @@ body * {
   font-size: 12px;
   line-height: 1.4;
   overflow-x: auto;
-  max-height: 400px;
-  overflow-y: auto;
+  margin-top: 20px;
 }
 
 /* Filter info */

@@ -1328,32 +1328,33 @@ view model =
                     ]
 
                 -- API preview configuration and output section
-                , H.section []
-                    [ H.h3 [] [ text "API Preview" ]
-                    , H.div [ A.class "api-preview-options", S.padding "10px", S.display "flex", S.flexWrap "wrap", S.gap "10px" ]
-                        [ viewApiCheckbox "date" "Date" model.apiPreviewOptions.date
-                        , viewApiCheckbox "time" "Time" model.apiPreviewOptions.time
-                        , viewApiCheckbox "ext" "Ext" model.apiPreviewOptions.ext
-                        , viewApiCheckbox "dir" "Dir" model.apiPreviewOptions.dir
-                        , viewApiCheckbox "branch" "Branch" model.apiPreviewOptions.branch
-                        , viewApiCheckbox "author" "Author" model.apiPreviewOptions.author
-                        , viewApiCheckbox "title" "Title" model.apiPreviewOptions.title
-                        , viewApiCheckbox "description" "Description" model.apiPreviewOptions.description
-                        ]
-                    , case Maybe.andThen .report model.repo of
+                , H.section [] <|
+                    case Maybe.andThen .report model.repo of
                         Nothing ->
-                            H.pre [ A.class "api-preview" ]
+                            [ H.h3 [] [ text "API Preview" ]
+                            , H.div [ A.class "api-preview-options", S.display "flex", S.flexWrap "wrap", S.gap "10px", S.fontSizePx 12 ]
+                                [ viewApiCheckbox "date" "Date" model.apiPreviewOptions.date
+                                , viewApiCheckbox "time" "Time" model.apiPreviewOptions.time
+                                , viewApiCheckbox "ext" "Ext" model.apiPreviewOptions.ext
+                                , viewApiCheckbox "dir" "Dir" model.apiPreviewOptions.dir
+                                , viewApiCheckbox "branch" "Branch" model.apiPreviewOptions.branch
+                                , viewApiCheckbox "author" "Author" model.apiPreviewOptions.author
+                                , viewApiCheckbox "title" "Title" model.apiPreviewOptions.title
+                                , viewApiCheckbox "description" "Description" model.apiPreviewOptions.description
+                                ]
+                            , H.pre
+                                [ A.class "api-preview" ]
                                 [ text (formatEventsForApi model.timezone model.apiPreviewOptions filteredEvents ++ "\n\n" ++ summarizerPrompt) ]
+                            ]
 
                         Just report ->
-                            if String.isEmpty report.summary then
-                                H.div [ A.class "api-preview" ]
-                                    [ H.p [ S.padding "20px", S.textAlign "center" ] [ text "Generating summary..." ] ]
+                            [ H.h3 [] [ text "Summary" ]
+                            , if String.isEmpty report.summary then
+                                H.p [ S.padding "20px", S.textAlign "center" ] [ text "Generating summary..." ]
 
-                            else
-                                H.div [ A.class "api-preview", S.padding "20px" ]
-                                    [ Markdown.toHtml [] report.summary ]
-                    ]
+                              else
+                                Markdown.toHtml [] report.summary
+                            ]
                 ]
 
             -- Error display container
