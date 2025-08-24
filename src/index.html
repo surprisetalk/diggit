@@ -248,16 +248,86 @@
             }
 
             loading(0.8);
-            const branches = await git.listBranches(gitOpts);
+            // Get both local and remote branches
+            const localBranches = await git.listBranches(gitOpts);
+            const remoteBranches = await git.listBranches({
+              ...gitOpts,
+              remote: "origin",
+            });
+
+            // Combine and deduplicate branches (remote branches come as 'origin/branch')
+            const allBranches = new Set(localBranches);
+            for (const remoteBranch of remoteBranches) {
+              allBranches.add(`origin/${remoteBranch}`);
+            }
+            const branches = Array.from(allBranches);
 
             const commitToBranches = {};
+            const branchTimeRanges = {};
+
+            // Identify default branch (main, master, or trunk)
+            const defaultBranches = ["main", "master", "trunk"];
+            let defaultBranch = null;
+            for (const branch of branches) {
+              const branchName = branch.replace("origin/", "");
+              if (defaultBranches.includes(branchName)) {
+                defaultBranch = branch;
+                break;
+              }
+            }
+
+            // Get commits from default branch
+            const defaultCommits = new Set();
+            if (defaultBranch) {
+              const defaultBranchCommits = await git.log({
+                ...gitOpts,
+                ref: defaultBranch,
+              });
+              for (const commit of defaultBranchCommits) {
+                defaultCommits.add(commit.oid);
+              }
+            }
+
             for (const branch of branches) {
               const branchCommits = await git.log({ ...gitOpts, ref: branch });
+
+              // Track earliest and latest commit times for this branch
+              let earliestTime = null;
+              let latestTime = null;
+              let divergenceTime = null;
+
               for (const commit of branchCommits) {
                 if (!commitToBranches[commit.oid])
                   commitToBranches[commit.oid] = [];
                 commitToBranches[commit.oid].push(branch);
+
+                const commitTime = commit.commit.author.timestamp * 1000;
+
+                // For non-default branches, find the divergence point
+                if (branch !== defaultBranch && defaultBranch) {
+                  // If this commit is not in the default branch, it's part of the divergence
+                  if (!defaultCommits.has(commit.oid)) {
+                    if (!divergenceTime || commitTime < divergenceTime) {
+                      divergenceTime = commitTime;
+                    }
+                  }
+                }
+
+                if (!earliestTime || commitTime < earliestTime) {
+                  earliestTime = commitTime;
+                }
+                if (!latestTime || commitTime > latestTime) {
+                  latestTime = commitTime;
+                }
               }
+
+              // Use divergence time if available, otherwise use earliest time
+              const startTime = divergenceTime || earliestTime;
+
+              branchTimeRanges[branch] = {
+                start: startTime,
+                end: latestTime === startTime ? null : latestTime,
+              };
             }
 
             const branchData = {};
@@ -266,15 +336,21 @@
                 ...gitOpts,
                 ref: branch,
               });
+              // Clean up branch name for display (remove 'origin/' prefix for remote branches)
+              const displayName = branch.replace("origin/", "");
+              const timeRange = branchTimeRanges[branch] || {
+                start: Date.now(),
+                end: null,
+              };
               branchData[branch] = {
                 id: branchCommit,
-                url: `${url}/tree/${branch}`,
-                start: Date.now(), // TODO: This is wrong.
-                end: null,
+                url: `${url}/tree/${displayName}`,
+                start: timeRange.start,
+                end: timeRange.end,
                 insertions: 0,
                 deletions: 0,
-                tags: ["branch", `>${branch}`],
-                summary: `Branch: ${branch}`,
+                tags: ["branch", `>${displayName}`],
+                summary: `Branch: ${displayName}`,
               };
             }
 
@@ -295,7 +371,9 @@
             )) {
               if (commitData[commitId])
                 commitData[commitId].tags.push(
-                  ...branchList.map((branch) => `>${branch}`),
+                  ...branchList.map(
+                    (branch) => `>${branch.replace("origin/", "")}`,
+                  ),
                 );
             }
             for (const [commitId, tagList] of Object.entries(commitToTags)) {
