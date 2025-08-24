@@ -1192,6 +1192,7 @@ view model =
                                 ]
                                 [ C.bars
                                     [ CA.x1 (Tuple.first >> toFloat)
+                                    , CA.x2 (Tuple.first >> toFloat >> (+) (30 * day))
                                     ]
                                     [ C.bar (Tuple.second >> logBase 10) [ CA.color "#0969da", CA.opacity 0.8 ]
                                     ]
