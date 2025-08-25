@@ -40,7 +40,7 @@ deno run -A npm:serve dist -s -C -S -n  # Using Deno
 
 ## Architecture Overview
 
-This is "diggit" - a Git repository visualization and analysis tool built in Elm that runs in the browser. The application title shows as "scrapsheets" in the UI.
+This is "diggit" - a Git repository visualization and analysis tool built in Elm that runs in the browser.
 
 ### Core Architecture
 - **Frontend**: Single Elm application (src/Main.elm) following The Elm Architecture (TEA)
@@ -91,7 +91,9 @@ Key JavaScript libraries loaded via CDN:
 6. Claude integration provides AI-powered insights
 
 ### Key Elm Messages
+
 Important message types in Main.elm:
+
 - `LoadRepo String`: Load repository from GitHub URL
 - `ReceivedRepoData`: Process incoming repository data
 - `ReceivedProgress`: Update progress indicators
@@ -101,3 +103,4 @@ Important message types in Main.elm:
 - `ToggleTag`: Tag-based filtering
 
 The application is designed to work entirely in the browser without backend dependencies.
+
