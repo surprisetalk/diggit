@@ -277,6 +277,20 @@ allEvents =
         >> Maybe.withDefault []
 
 
+filteredEvents : Model -> List Event
+filteredEvents model =
+    allEvents model
+        |> List.filter
+            (\event ->
+                List.all identity
+                    [ String.isEmpty model.route.start || (model.route.start <= formatEventDate model.timezone event.start)
+                    , String.isEmpty model.route.end || (event.end |> Maybe.map (\e -> formatEventDate model.timezone e <= model.route.end) |> Maybe.withDefault True)
+                    , Set.isEmpty model.route.tags || Set.isEmpty (Set.diff model.route.tags event.tags)
+                    , String.isEmpty model.route.query || String.contains (String.toLower model.route.query) (String.toLower event.summary)
+                    ]
+            )
+
+
 
 -- TODO: clusters n = allEvents model |> Random.List.shuffle |> Random.map (KMeans.clusterBy eventVector n)
 
@@ -702,7 +716,7 @@ update msg ({ form, claude } as model) =
                             , Http.header "anthropic-dangerous-direct-browser-access" "true"
                             ]
                         , url = "https://api.anthropic.com/v1/messages"
-                        , body = Http.jsonBody (encodeClaudeRequest model.claude.model (formatEventsForApi model.timezone model.apiPreviewOptions (allEvents model) ++ "\n\n" ++ summarizerPrompt))
+                        , body = Http.jsonBody (encodeClaudeRequest model.claude.model (formatEventsForApi model.timezone model.apiPreviewOptions (filteredEvents model) ++ "\n\n" ++ summarizerPrompt))
                         , expect = Http.expectString ClaudeResponseReceived
                         , timeout = Just 60000
                         , tracker = Nothing
@@ -1104,20 +1118,11 @@ formatEventsForApi timezone options events =
 view : Model -> Browser.Document Msg
 view model =
     let
-        filteredEvents =
-            allEvents model
-                |> List.filter
-                    (\event ->
-                        List.all identity
-                            [ String.isEmpty model.route.start || (model.route.start <= formatEventDate model.timezone event.start)
-                            , String.isEmpty model.route.end || (event.end |> Maybe.map (\e -> formatEventDate model.timezone e <= model.route.end) |> Maybe.withDefault True)
-                            , Set.isEmpty model.route.tags || Set.isEmpty (Set.diff model.route.tags event.tags)
-                            , String.isEmpty model.route.query || String.contains (String.toLower model.route.query) (String.toLower event.summary)
-                            ]
-                    )
+        events =
+            filteredEvents model
 
         filteredTagFrequencies =
-            filteredEvents
+            events
                 |> List.map .tags
                 |> List.concatMap Set.toList
                 |> List.foldl (\tag dict -> Dict.update tag (Maybe.withDefault 0 >> (+) 1 >> Just) dict) Dict.empty
@@ -1165,7 +1170,7 @@ view model =
                 -- Event filtering and visualization section
                 , H.section []
                     [ H.div [ A.class "filter-count filter-info" ]
-                        [ text ("Showing " ++ String.fromInt (List.length filteredEvents) ++ " events") ]
+                        [ text ("Showing " ++ String.fromInt (List.length events) ++ " events") ]
                     , H.div [ A.class "form-row" ]
                         [ H.input
                             [ A.type_ "text"
@@ -1178,7 +1183,7 @@ view model =
                         ]
 
                     -- Event histogram chart
-                    , if List.isEmpty filteredEvents then
+                    , if List.isEmpty events then
                         text ""
 
                       else
@@ -1199,7 +1204,7 @@ view model =
                                   <|
                                     Dict.toList <|
                                         List.foldl (\event -> Dict.update (Time.posixToMillis event.start // (30 * day) * 30 * day) (Maybe.withDefault 1 >> (+) 1 >> Just)) Dict.empty <|
-                                            filteredEvents
+                                            events
                                 , C.xLabels
                                     [ CA.noGrid
                                     , CA.amount 4
@@ -1282,7 +1287,7 @@ view model =
                     Just _ ->
                         -- TODO: If showing exactly 1000, then display a little message that says that 1000 events is maximum.
                         H.div [ A.class "events-list" ]
-                            (filteredEvents
+                            (events
                                 |> List.take 1000
                                 -- Limit to first 1000 events for performance
                                 |> List.map (viewEvent model)
@@ -1350,7 +1355,7 @@ view model =
                                 ]
                             , H.pre
                                 [ A.class "api-preview" ]
-                                [ text (formatEventsForApi model.timezone model.apiPreviewOptions filteredEvents ++ "\n\n" ++ summarizerPrompt) ]
+                                [ text (formatEventsForApi model.timezone model.apiPreviewOptions events ++ "\n\n" ++ summarizerPrompt) ]
                             ]
 
                         Just report ->
